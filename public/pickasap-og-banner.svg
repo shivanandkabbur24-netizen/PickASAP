@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <defs>
+    <linearGradient id="bg-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f0f11"/>
+      <stop offset="50%" stop-color="#18181b"/>
+      <stop offset="100%" stop-color="#09090b"/>
+    </linearGradient>
+    <linearGradient id="gold-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f59e0b"/>
+      <stop offset="100%" stop-color="#d97706"/>
+    </linearGradient>
+    <linearGradient id="accent-badge" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#2563eb"/>
+      <stop offset="100%" stop-color="#7c3aed"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="630" fill="url(#bg-grad)"/>
+
+  <!-- Subtle grid lines -->
+  <g stroke="#ffffff" stroke-opacity="0.04" stroke-width="1">
+    <line x1="80" y1="0" x2="80" y2="630"/>
+    <line x1="1120" y1="0" x2="1120" y2="630"/>
+    <line x1="0" y1="80" x2="1200" y2="80"/>
+    <line x1="0" y1="550" x2="1200" y2="550"/>
+  </g>
+
+  <!-- Top Badge -->
+  <g transform="translate(100, 110)">
+    <rect width="320" height="36" rx="18" fill="url(#accent-badge)" fill-opacity="0.2" stroke="#818cf8" stroke-width="1.5"/>
+    <text x="160" y="23" fill="#c7d2fe" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="700" letter-spacing="2" text-anchor="middle">CURATED EDITORIAL SHOPPING</text>
+  </g>
+
+  <!-- Brand Title -->
+  <text x="100" y="240" fill="#ffffff" font-family="'Playfair Display', Georgia, serif" font-size="78" font-weight="800" letter-spacing="-1.5">PickASAP</text>
+  <circle cx="490" cy="235" r="7" fill="#f59e0b"/>
+
+  <!-- Subheading & Tagline -->
+  <text x="100" y="300" fill="#e4e4e7" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="28" font-weight="600">
+    Smart Affiliate Deals &amp; Quality Recommendations
+  </text>
+  <text x="100" y="340" fill="#a1a1aa" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="20" font-weight="400">
+    Discover handpicked low cost &amp; high quality products from Amazon, Flipkart, Myntra &amp; more.
+  </text>
+
+  <!-- Partner Pills -->
+  <g transform="translate(100, 420)">
+    <!-- Flipkart -->
+    <g transform="translate(0, 0)">
+      <rect width="180" height="52" rx="12" fill="#1e293b" stroke="#334155" stroke-width="1.5"/>
+      <circle cx="28" cy="26" r="10" fill="#2874f0"/>
+      <text x="28" y="30" fill="#ffffff" font-family="sans-serif" font-size="11" font-weight="800" text-anchor="middle">F</text>
+      <text x="50" y="32" fill="#ffffff" font-family="sans-serif" font-size="16" font-weight="700">Flipkart Deals</text>
+    </g>
+
+    <!-- Amazon -->
+    <g transform="translate(200, 0)">
+      <rect width="180" height="52" rx="12" fill="#1e293b" stroke="#334155" stroke-width="1.5"/>
+      <circle cx="28" cy="26" r="10" fill="#ff9900"/>
+      <text x="28" y="30" fill="#111111" font-family="sans-serif" font-size="11" font-weight="900" text-anchor="middle">a</text>
+      <text x="50" y="32" fill="#ffffff" font-family="sans-serif" font-size="16" font-weight="700">Amazon Finds</text>
+    </g>
+
+    <!-- Myntra -->
+    <g transform="translate(400, 0)">
+      <rect width="180" height="52" rx="12" fill="#1e293b" stroke="#334155" stroke-width="1.5"/>
+      <circle cx="28" cy="26" r="10" fill="#ff3f6c"/>
+      <text x="28" y="30" fill="#ffffff" font-family="sans-serif" font-size="11" font-weight="800" text-anchor="middle">M</text>
+      <text x="50" y="32" fill="#ffffff" font-family="sans-serif" font-size="16" font-weight="700">Myntra Trends</text>
+    </g>
+
+    <!-- Value Badge -->
+    <g transform="translate(600, 0)">
+      <rect width="250" height="52" rx="12" fill="#1c1917" stroke="#44403c" stroke-width="1.5"/>
+      <text x="24" y="32" fill="#facc15" font-family="sans-serif" font-size="15" font-weight="700">✦ Low Cost &amp; Top Quality</text>
+    </g>
+  </g>
+
+  <!-- URL watermark -->
+  <text x="1100" y="525" fill="#71717a" font-family="monospace" font-size="18" text-anchor="end">pickasap.com</text>
+</svg>

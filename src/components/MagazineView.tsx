@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Search,
   Heart,
@@ -16,6 +16,8 @@ import {
   X,
   MessageCircle,
   Send,
+  Tag,
+  TrendingUp,
 } from 'lucide-react';
 import { Product, CategoryType, StoreType, SortOption } from '../types';
 import { database as db } from '../lib/firebase';
@@ -47,15 +49,77 @@ export const MagazineView: React.FC<MagazineViewProps> = ({
   onOpenUpload,
   isLoggedIn,
 }) => {
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState<CategoryType>('All');
-  const [selectedStore, setSelectedStore] = useState<StoreType>('All');
-  const [sortBy, setSortBy] = useState<SortOption>('newest');
-  const [onlyFavorites, setOnlyFavorites] = useState(false);
+  // Initialize state from URL search params for direct deep-linking and SEO
+  const [searchQuery, setSearchQuery] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('search') || '';
+    }
+    return '';
+  });
+  const [selectedCategory, setSelectedCategory] = useState<CategoryType>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const cat = params.get('category');
+      if (cat && CATEGORIES.includes(cat as CategoryType)) return cat as CategoryType;
+    }
+    return 'All';
+  });
+  const [selectedStore, setSelectedStore] = useState<StoreType>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const store = params.get('store');
+      if (store && STORES.includes(store as StoreType)) return store as StoreType;
+    }
+    return 'All';
+  });
+  const [sortBy, setSortBy] = useState<SortOption>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const sort = params.get('sort');
+      if (
+        sort === 'price_low' ||
+        sort === 'price_high' ||
+        sort === 'most_clicked' ||
+        sort === 'alphabetical' ||
+        sort === 'newest'
+      ) {
+        return sort as SortOption;
+      }
+    }
+    return 'newest';
+  });
+  const [onlyFavorites, setOnlyFavorites] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('favorites') === 'true';
+    }
+    return false;
+  });
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [selectedProductForModal, setSelectedProductForModal] = useState<Product | null>(null);
   const [shareProduct, setShareProduct] = useState<Product | null>(null);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
+
+  // Listen for global filter events dispatched from SEO footer or deep links
+  useEffect(() => {
+    const handleGlobalFilter = (e: CustomEvent<{ store?: StoreType; category?: CategoryType; sort?: SortOption; search?: string }>) => {
+      if (e.detail?.store !== undefined) setSelectedStore(e.detail.store);
+      if (e.detail?.category !== undefined) setSelectedCategory(e.detail.category);
+      if (e.detail?.sort !== undefined) setSortBy(e.detail.sort);
+      if (e.detail?.search !== undefined) setSearchQuery(e.detail.search);
+      // Smoothly scroll to product catalog
+      const catalogEl = document.getElementById('product-catalog-anchor');
+      if (catalogEl) {
+        catalogEl.scrollIntoView({ behavior: 'smooth' });
+      }
+    };
+
+    window.addEventListener('pickasap:filter' as any, handleGlobalFilter as EventListener);
+    return () => {
+      window.removeEventListener('pickasap:filter' as any, handleGlobalFilter as EventListener);
+    };
+  }, []);
 
   // Filter and sort products
   const filteredProducts = useMemo(() => {
@@ -113,6 +177,112 @@ export const MagazineView: React.FC<MagazineViewProps> = ({
         return 0;
       });
   }, [products, searchQuery, selectedCategory, selectedStore, onlyFavorites, sortBy, favorites]);
+
+  // SEO & Dynamic Metadata synchronization: updates browser title, meta tags, and URL search params
+  useEffect(() => {
+    // 1. Sync URL query params without triggering full page reloads
+    const params = new URLSearchParams();
+    if (searchQuery.trim()) params.set('search', searchQuery.trim());
+    if (selectedCategory !== 'All') params.set('category', selectedCategory);
+    if (selectedStore !== 'All') params.set('store', selectedStore);
+    if (sortBy !== 'newest') params.set('sort', sortBy);
+    if (onlyFavorites) params.set('favorites', 'true');
+
+    const newQueryString = params.toString();
+    const newRelativePath = newQueryString ? `${window.location.pathname}?${newQueryString}` : window.location.pathname;
+    window.history.replaceState(null, '', newRelativePath);
+
+    // 2. Dynamic document title & meta description updates for SEO
+    let dynamicTitle = 'PickASAP — Curated Shopping, Flipkart & Amazon Affiliate Deals, Low Cost & High Quality Products';
+    let dynamicDesc = 'PickASAP is your premier curated shopping magazine and affiliate discovery hub. Discover verified low cost products and high quality products across Flipkart, Amazon, Myntra, and top stores.';
+
+    if (searchQuery.trim()) {
+      dynamicTitle = `"${searchQuery.trim()}" — Curated Shopping & Affiliate Deals | PickASAP`;
+      dynamicDesc = `Search results for "${searchQuery.trim()}" on PickASAP. Discover handpicked low cost and high quality product recommendations from Flipkart, Amazon, and Myntra.`;
+    } else if (selectedStore !== 'All') {
+      if (selectedStore === 'Flipkart') {
+        dynamicTitle = 'Flipkart Deals, Offers & Curated Affiliate Finds — PickASAP';
+        dynamicDesc = 'Explore curated Flipkart deals, verified discount recommendations, and top-rated low cost & high quality products on PickASAP.';
+      } else if (selectedStore === 'Amazon') {
+        dynamicTitle = 'Amazon Finds, Best Deals & Low Cost Products — PickASAP';
+        dynamicDesc = 'Handpicked Amazon finds, best-seller reviews, and curated high quality recommendations with transparent affiliate links on PickASAP.';
+      } else if (selectedStore === 'Myntra') {
+        dynamicTitle = 'Myntra Fashion, Lifestyle Trends & Curated Deals — PickASAP';
+        dynamicDesc = 'Curated fashion, apparel, and lifestyle trends from Myntra. Handpicked quality picks and seasonal offers on PickASAP.';
+      } else {
+        dynamicTitle = `${selectedStore} Curated Deals & Products — PickASAP`;
+        dynamicDesc = `Browse curated shopping recommendations and affiliate deals from ${selectedStore} on PickASAP.`;
+      }
+    } else if (sortBy === 'price_low') {
+      dynamicTitle = 'Low Cost Products & Budget Shopping Deals — PickASAP';
+      dynamicDesc = 'Discover the best low cost products and budget-friendly finds with verified high quality across Amazon, Flipkart, and Myntra.';
+    } else if (sortBy === 'most_clicked') {
+      dynamicTitle = 'Top Trending & Good Quality Products — PickASAP';
+      dynamicDesc = 'Explore community-favorite, most popular and highly rated product recommendations across all partnered affiliate stores on PickASAP.';
+    } else if (selectedCategory !== 'All') {
+      dynamicTitle = `${selectedCategory} Curated Recommendations & Deals — PickASAP`;
+      dynamicDesc = `Discover handpicked ${selectedCategory} products, verified affiliate deals, and top quality picks on PickASAP.`;
+    }
+
+    document.title = dynamicTitle;
+    const metaDesc = document.querySelector('meta[name="description"]');
+    if (metaDesc) metaDesc.setAttribute('content', dynamicDesc);
+    const ogTitle = document.querySelector('meta[property="og:title"]');
+    if (ogTitle) ogTitle.setAttribute('content', dynamicTitle);
+    const ogDesc = document.querySelector('meta[property="og:description"]');
+    if (ogDesc) ogDesc.setAttribute('content', dynamicDesc);
+    const twTitle = document.querySelector('meta[name="twitter:title"]');
+    if (twTitle) twTitle.setAttribute('content', dynamicTitle);
+    const twDesc = document.querySelector('meta[name="twitter:description"]');
+    if (twDesc) twDesc.setAttribute('content', dynamicDesc);
+
+    // 3. Dynamic JSON-LD structured data for product collection
+    try {
+      let scriptTag = document.getElementById('pickasap-dynamic-schema');
+      if (!scriptTag) {
+        scriptTag = document.createElement('script');
+        scriptTag.id = 'pickasap-dynamic-schema';
+        scriptTag.setAttribute('type', 'application/ld+json');
+        document.head.appendChild(scriptTag);
+      }
+
+      if (filteredProducts.length > 0) {
+        const schemaItems = filteredProducts.slice(0, 12).map((p, idx) => ({
+          '@type': 'ListItem',
+          position: idx + 1,
+          item: {
+            '@type': 'Product',
+            name: p.title,
+            description: p.description || p.title,
+            image: p.imageUrl,
+            category: p.category,
+            offers: {
+              '@type': 'Offer',
+              price: p.price.replace(/[^0-9.]/g, '') || '0',
+              priceCurrency: 'INR',
+              availability: 'https://schema.org/InStock',
+              url: p.affiliateUrl,
+              seller: {
+                '@type': 'Organization',
+                name: p.store,
+              },
+            },
+          },
+        }));
+
+        scriptTag.textContent = JSON.stringify({
+          '@context': 'https://schema.org',
+          '@type': 'ItemList',
+          name: dynamicTitle,
+          description: dynamicDesc,
+          numberOfItems: filteredProducts.length,
+          itemListElement: schemaItems,
+        });
+      }
+    } catch {
+      // ignore schema update errors in non-browser env
+    }
+  }, [searchQuery, selectedCategory, selectedStore, sortBy, onlyFavorites, filteredProducts]);
 
   // Click handler that records real-time analytics
   const handleAffiliateClick = (e: React.MouseEvent, product: Product) => {
@@ -188,9 +358,94 @@ export const MagazineView: React.FC<MagazineViewProps> = ({
       </section>
 
       {/* Main Content Area */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+      <main id="product-catalog-anchor" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
         {/* Search, Filter Bar & Favorites Toggle */}
         <div className="space-y-6 mb-12">
+          {/* Quick Hubs & Curations: Flipkart, Amazon, Myntra, Low Cost & Quality */}
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none text-xs">
+            <span className="text-neutral-400 font-medium whitespace-nowrap mr-1">Curated Hubs:</span>
+            
+            <button
+              id="hub-all-btn"
+              onClick={() => {
+                setSelectedStore('All');
+                setSortBy('newest');
+              }}
+              className={`px-3 py-1.5 rounded-lg border transition-all cursor-pointer whitespace-nowrap font-medium ${
+                selectedStore === 'All' && sortBy === 'newest'
+                  ? 'border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-950'
+                  : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-600 dark:text-neutral-400 hover:border-neutral-400'
+              }`}
+            >
+              All Finds
+            </button>
+
+            <button
+              id="hub-flipkart-btn"
+              onClick={() => setSelectedStore(selectedStore === 'Flipkart' ? 'All' : 'Flipkart')}
+              className={`px-3 py-1.5 rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap font-medium ${
+                selectedStore === 'Flipkart'
+                  ? 'border-blue-600 bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800 font-semibold'
+                  : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:border-blue-300'
+              }`}
+            >
+              <span className="w-2 h-2 rounded-full bg-[#2874f0]"></span>
+              <span>Flipkart Deals</span>
+            </button>
+
+            <button
+              id="hub-amazon-btn"
+              onClick={() => setSelectedStore(selectedStore === 'Amazon' ? 'All' : 'Amazon')}
+              className={`px-3 py-1.5 rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap font-medium ${
+                selectedStore === 'Amazon'
+                  ? 'border-amber-600 bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800 font-semibold'
+                  : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:border-amber-300'
+              }`}
+            >
+              <span className="w-2 h-2 rounded-full bg-[#ff9900]"></span>
+              <span>Amazon Finds</span>
+            </button>
+
+            <button
+              id="hub-myntra-btn"
+              onClick={() => setSelectedStore(selectedStore === 'Myntra' ? 'All' : 'Myntra')}
+              className={`px-3 py-1.5 rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap font-medium ${
+                selectedStore === 'Myntra'
+                  ? 'border-pink-600 bg-pink-50 text-pink-700 dark:bg-pink-950/40 dark:text-pink-300 dark:border-pink-800 font-semibold'
+                  : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:border-pink-300'
+              }`}
+            >
+              <span className="w-2 h-2 rounded-full bg-[#ff3f6c]"></span>
+              <span>Myntra Fashion</span>
+            </button>
+
+            <button
+              id="hub-low-cost-btn"
+              onClick={() => setSortBy(sortBy === 'price_low' ? 'newest' : 'price_low')}
+              className={`px-3 py-1.5 rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap font-medium ${
+                sortBy === 'price_low'
+                  ? 'border-emerald-600 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800 font-semibold'
+                  : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:border-emerald-300'
+              }`}
+            >
+              <Tag className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+              <span>Low Cost Products</span>
+            </button>
+
+            <button
+              id="hub-quality-btn"
+              onClick={() => setSortBy(sortBy === 'most_clicked' ? 'newest' : 'most_clicked')}
+              className={`px-3 py-1.5 rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap font-medium ${
+                sortBy === 'most_clicked'
+                  ? 'border-purple-600 bg-purple-50 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800 font-semibold'
+                  : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:border-purple-300'
+              }`}
+            >
+              <Sparkles className="w-3 h-3 text-purple-600 dark:text-purple-400" />
+              <span>Good Quality Picks</span>
+            </button>
+          </div>
+
           {/* Top Filter Row */}
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
             {/* Search Input */}

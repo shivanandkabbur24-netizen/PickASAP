@@ -1,0 +1,11 @@
+# robots.txt for PickASAP (pickasap.com and subdomains)
+User-agent: *
+Allow: /
+
+# Disallow internal or admin modal states if needed
+Disallow: /api/
+Disallow: /*?modal=*
+
+# Host & Sitemaps
+Host: https://pickasap.com
+Sitemap: https://pickasap.com/sitemap.xml

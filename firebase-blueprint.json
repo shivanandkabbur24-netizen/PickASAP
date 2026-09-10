@@ -1,0 +1,155 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "Affiliate product recommendation curated by creators",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the product document"
+        },
+        "title": {
+          "type": "string",
+          "description": "Title or headline of the product recommendation",
+          "maxLength": 200
+        },
+        "description": {
+          "type": "string",
+          "description": "Product summary and detailed editorial commentary",
+          "maxLength": 3000
+        },
+        "editorialNote": {
+          "type": "string",
+          "description": "Curator's personal review note",
+          "maxLength": 1000
+        },
+        "category": {
+          "type": "string",
+          "description": "Category classification",
+          "maxLength": 100
+        },
+        "imageUrl": {
+          "type": "string",
+          "description": "Product visual preview image URL",
+          "maxLength": 1000
+        },
+        "affiliateUrl": {
+          "type": "string",
+          "description": "Direct affiliate referral link",
+          "maxLength": 2000
+        },
+        "store": {
+          "type": "string",
+          "description": "Affiliate partner merchant name",
+          "maxLength": 100
+        },
+        "price": {
+          "type": "string",
+          "description": "Current listed retail price",
+          "maxLength": 50
+        },
+        "originalPrice": {
+          "type": "string",
+          "description": "Previous retail price before discount",
+          "maxLength": 50
+        },
+        "discountPercent": {
+          "type": "number",
+          "description": "Percentage discount calculated"
+        },
+        "tags": {
+          "type": "array",
+          "description": "Keywords or search tags"
+        },
+        "uploaderId": {
+          "type": "string",
+          "description": "UID of the creator who published the product",
+          "maxLength": 128
+        },
+        "uploaderName": {
+          "type": "string",
+          "description": "Name or handle of the publishing creator",
+          "maxLength": 100
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO timestamp of publication"
+        },
+        "clicksCount": {
+          "type": "number",
+          "description": "Total aggregated clicks recorded"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "description",
+        "category",
+        "imageUrl",
+        "affiliateUrl",
+        "store",
+        "price",
+        "uploaderId",
+        "uploaderName",
+        "createdAt"
+      ]
+    },
+    "ClickRecord": {
+      "title": "ClickRecord",
+      "description": "Anonymous telemetry log recorded when an affiliate link is opened",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique click record ID"
+        },
+        "productId": {
+          "type": "string",
+          "description": "Target product identifier",
+          "maxLength": 128
+        },
+        "productTitle": {
+          "type": "string",
+          "description": "Title of the target product",
+          "maxLength": 200
+        },
+        "store": {
+          "type": "string",
+          "description": "Destination affiliate store",
+          "maxLength": 100
+        },
+        "timestamp": {
+          "type": "string",
+          "description": "ISO timestamp of the event"
+        },
+        "userAgent": {
+          "type": "string",
+          "description": "Browser user agent for device analytics",
+          "maxLength": 500
+        }
+      },
+      "required": [
+        "id",
+        "productId",
+        "productTitle",
+        "store",
+        "timestamp"
+      ]
+    }
+  },
+  "firestore": {
+    "/products/{productId}": {
+      "schema": {
+        "$ref": "#/entities/Product"
+      },
+      "description": "Public curated affiliate products catalog"
+    },
+    "/clicks/{clickId}": {
+      "schema": {
+        "$ref": "#/entities/ClickRecord"
+      },
+      "description": "Real-time affiliate link click telemetry"
+    }
+  }
+}

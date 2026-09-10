@@ -1,0 +1,59 @@
+@import "tailwindcss";
+
+@variant dark (&:where(.dark, .dark *));
+@custom-variant dark (&:where(.dark, .dark *));
+
+
+html.dark, body.dark {
+  background-color: #0c0c0d;
+  color: #f3f3f3;
+  color-scheme: dark;
+}
+
+html:not(.dark), body:not(.dark) {
+  color-scheme: light;
+}
+
+@layer base {
+
+
+  :root {
+    --font-editorial: 'Newsreader', 'Playfair Display', Georgia, Cambria, 'Times New Roman', Times, serif;
+    --font-heading: 'Playfair Display', Georgia, serif;
+    --font-body: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  }
+
+  body {
+    font-family: var(--font-body);
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  h1, h2, h3, .font-editorial {
+    font-family: var(--font-editorial);
+  }
+}
+
+.font-serif-editorial {
+  font-family: 'Newsreader', 'Playfair Display', Georgia, serif;
+}
+
+.font-heading-editorial {
+  font-family: 'Playfair Display', Georgia, serif;
+}
+
+/* Custom subtle animation */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+

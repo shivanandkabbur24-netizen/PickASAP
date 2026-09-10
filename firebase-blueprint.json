@@ -31,8 +31,8 @@
         },
         "imageUrl": {
           "type": "string",
-          "description": "Product visual preview image URL",
-          "maxLength": 1000
+          "description": "Product visual preview image URL or photo data URI",
+          "maxLength": 350000
         },
         "affiliateUrl": {
           "type": "string",

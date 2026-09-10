@@ -77,9 +77,47 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     setImageFileName(file.name);
     const reader = new FileReader();
     reader.onload = (e) => {
-      if (e.target?.result) {
-        setImageDataUrl(e.target.result as string);
-      }
+      const rawDataUrl = e.target?.result as string;
+      if (!rawDataUrl) return;
+
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          const MAX_DIM = 960;
+          let width = img.width;
+          let height = img.height;
+
+          if (width > height) {
+            if (width > MAX_DIM) {
+              height = Math.round((height * MAX_DIM) / width);
+              width = MAX_DIM;
+            }
+          } else {
+            if (height > MAX_DIM) {
+              width = Math.round((width * MAX_DIM) / height);
+              height = MAX_DIM;
+            }
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, width, height);
+            const optimized = canvas.toDataURL('image/jpeg', 0.85);
+            setImageDataUrl(optimized);
+            return;
+          }
+        } catch {
+          // Fallback to raw if canvas optimization fails
+        }
+        setImageDataUrl(rawDataUrl);
+      };
+      img.onerror = () => {
+        setImageDataUrl(rawDataUrl);
+      };
+      img.src = rawDataUrl;
     };
     reader.onerror = () => {
       setError('Failed to read image file from device.');

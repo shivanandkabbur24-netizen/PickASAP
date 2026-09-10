@@ -1,10 +1,9 @@
 import { initializeApp } from 'firebase/app';
 import { 
-  getFirestore, 
+  initializeFirestore, 
   collection, 
   doc, 
   getDocs, 
-  getDocFromServer,
   setDoc, 
   deleteDoc, 
   updateDoc, 
@@ -28,9 +27,16 @@ import { Product, ClickRecord, UserProfile } from '../types';
 // Initialize Firebase App
 const app = initializeApp(firebaseConfig);
 
-// Initialize Cloud Firestore with the configured Database ID
-// CRITICAL: The app will break without this line
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+// Initialize Cloud Firestore with experimentalForceLongPolling to guarantee reliable connectivity
+// across iframes, sandboxed proxies, and restricted corporate networks.
+// CRITICAL: The app will break without the firestoreDatabaseId parameter
+export const db = initializeFirestore(
+  app,
+  {
+    experimentalForceLongPolling: true,
+  },
+  firebaseConfig.firestoreDatabaseId
+);
 
 // Initialize Firebase Authentication
 export const auth = getAuth(app);
@@ -85,18 +91,6 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   console.error('Firestore Error: ', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
 }
-
-// Connection test on initialization
-async function testFirestoreConnection() {
-  try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.warn('Firestore client appears offline. Please check network/Firebase setup.');
-    }
-  }
-}
-testFirestoreConnection();
 
 // Local storage key constants for fast caching and offline resilience
 const STORAGE_PRODUCTS = 'pickasap_products_v1';

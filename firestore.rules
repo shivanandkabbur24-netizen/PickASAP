@@ -30,7 +30,7 @@ service cloud.firestore {
              data.title is string && data.title.size() <= 200 &&
              data.description is string && data.description.size() <= 3000 &&
              data.category is string && data.category.size() <= 100 &&
-             data.imageUrl is string && data.imageUrl.size() <= 1000 &&
+             data.imageUrl is string && data.imageUrl.size() <= 350000 &&
              data.affiliateUrl is string && data.affiliateUrl.size() <= 2000 &&
              data.store is string && data.store.size() <= 100 &&
              data.price is string && data.price.size() <= 50 &&

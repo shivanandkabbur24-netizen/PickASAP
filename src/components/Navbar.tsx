@@ -106,11 +106,11 @@ export const Navbar: React.FC<NavbarProps> = ({
               </button>
             </div>
           ) : (
-            /* When NOT logged in: Show the requested button "upload your own affiliate links" */
+            /* When NOT logged in: Show the requested button "upload your own affiliate links" on desktop screens, hidden on mobile web */
             <button
               id="upload-affiliate-links-btn"
               onClick={() => setCurrentView('login')}
-              className="px-4 sm:px-5 py-2.5 rounded-full bg-neutral-900 hover:bg-black dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-950 text-xs font-semibold uppercase tracking-wider transition-all shadow-sm hover:shadow active:scale-95 cursor-pointer whitespace-nowrap"
+              className="hidden sm:inline-flex items-center justify-center px-4 sm:px-5 py-2.5 rounded-full bg-neutral-900 hover:bg-black dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-950 text-xs font-semibold uppercase tracking-wider transition-all shadow-sm hover:shadow active:scale-95 cursor-pointer whitespace-nowrap"
             >
               Upload Your Own Affiliate Links
             </button>

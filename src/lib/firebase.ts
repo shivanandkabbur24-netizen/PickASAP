@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { 
-  getFirestore, 
+  initializeFirestore, 
   setLogLevel,
   collection, 
   doc, 
@@ -29,11 +29,17 @@ import { Product, ClickRecord, UserProfile } from '../types';
 const app = initializeApp(firebaseConfig);
 
 // Initialize Cloud Firestore with databaseId as prescribed by Firebase Integration Skill
-// CRITICAL: The app will break without the firestoreDatabaseId parameter
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+// and enable long-polling to prevent WebSocket/streaming drops in sandboxed iframe environments
+export const db = initializeFirestore(
+  app,
+  {
+    experimentalForceLongPolling: true,
+  },
+  firebaseConfig.firestoreDatabaseId
+);
 
 // Silence internal Firestore SDK transport warnings from bubbling to console
-setLogLevel('error');
+setLogLevel('silent');
 
 // Initialize Firebase Authentication
 export const auth = getAuth(app);
@@ -99,14 +105,47 @@ export const getStoredProducts = (): Product[] => {
   try {
     const raw = localStorage.getItem(STORAGE_PRODUCTS);
     if (!raw) return [];
-    return JSON.parse(raw);
+    const list = JSON.parse(raw);
+    if (!Array.isArray(list)) return [];
+    // Strict deduplication by product id and combination of affiliateUrl + title
+    const seenIds = new Set<string>();
+    const seenCombos = new Set<string>();
+    const deduped: Product[] = [];
+    for (const item of list) {
+      if (!item || !item.id) continue;
+      const comboKey = `${(item.affiliateUrl || '').trim()}::${(item.title || '').trim().toLowerCase()}`;
+      if (seenIds.has(item.id) || (item.affiliateUrl && seenCombos.has(comboKey))) {
+        continue;
+      }
+      seenIds.add(item.id);
+      if (item.affiliateUrl) seenCombos.add(comboKey);
+      deduped.push(item);
+    }
+    return deduped;
   } catch {
     return [];
   }
 };
 
 export const setStoredProducts = (products: Product[]) => {
-  localStorage.setItem(STORAGE_PRODUCTS, JSON.stringify(products));
+  try {
+    const seenIds = new Set<string>();
+    const seenCombos = new Set<string>();
+    const deduped: Product[] = [];
+    for (const item of products) {
+      if (!item || !item.id) continue;
+      const comboKey = `${(item.affiliateUrl || '').trim()}::${(item.title || '').trim().toLowerCase()}`;
+      if (seenIds.has(item.id) || (item.affiliateUrl && seenCombos.has(comboKey))) {
+        continue;
+      }
+      seenIds.add(item.id);
+      if (item.affiliateUrl) seenCombos.add(comboKey);
+      deduped.push(item);
+    }
+    localStorage.setItem(STORAGE_PRODUCTS, JSON.stringify(deduped));
+  } catch (e) {
+    console.warn('Storage set error:', e);
+  }
 };
 
 export const getStoredClicks = (): ClickRecord[] => {
@@ -142,8 +181,9 @@ export const sanitizeFirestoreData = <T extends Record<string, any>>(obj: T): Re
 
 // Application Database & Authentication Service
 export const databaseService = {
-  // Fetch all products from Firestore
+  // Fetch all products from Firestore with cache prioritization
   async getProducts(): Promise<Product[]> {
+    const cached = getStoredProducts();
     const path = 'products';
     try {
       const q = query(collection(db, path), orderBy('createdAt', 'desc'));
@@ -156,48 +196,51 @@ export const databaseService = {
         setStoredProducts(items);
         return items;
       }
-      return getStoredProducts();
+      return cached;
     } catch (error) {
       console.warn('Firestore getProducts notice, falling back to local cache:', error);
-      return getStoredProducts();
+      return cached;
     }
   },
 
   // Save / Upload new affiliate product to Firestore smoothly
   async addProduct(product: Product): Promise<Product> {
-    const path = `products/${product.id}`;
-
-    // Always update local cache optimistically first so user sees their product instantly
+    // 1. Always update local cache optimistically first so user sees their product in 0ms
     const current = getStoredProducts();
-    const updated = [product, ...current.filter((p) => p.id !== product.id)];
+    const comboKey = `${(product.affiliateUrl || '').trim()}::${(product.title || '').trim().toLowerCase()}`;
+    const filtered = current.filter(
+      (p) => p.id !== product.id && `${(p.affiliateUrl || '').trim()}::${(p.title || '').trim().toLowerCase()}` !== comboKey
+    );
+    const updated = [product, ...filtered];
     setStoredProducts(updated);
 
-    // Sanitize to remove any undefined properties that cause Firestore setDoc to fail
+    // 2. Sanitize to remove any undefined properties that cause Firestore setDoc to fail
     const cleanProduct = sanitizeFirestoreData(product);
 
-    try {
-      await setDoc(doc(db, 'products', product.id), cleanProduct);
-      return product;
-    } catch (error) {
+    // 3. Cloud persistence in background with safe timeout race so UI is never blocked
+    const firestoreWrite = setDoc(doc(db, 'products', product.id), cleanProduct).catch((error) => {
       console.warn('Firestore setDoc notice (saved safely to local cache):', error);
-      // Return the product smoothly so user upload never fails
-      return product;
-    }
+    });
+
+    // Don't make the user wait longer than 400ms for cloud confirmation
+    const fastTimeout = new Promise((resolve) => setTimeout(resolve, 400));
+    await Promise.race([firestoreWrite, fastTimeout]);
+
+    return product;
   },
 
-  // Delete product from Firestore
+  // Delete product from Firestore smoothly
   async deleteProduct(productId: string): Promise<boolean> {
-    const path = `products/${productId}`;
+    // 1. Immediately remove from local storage cache
     const current = getStoredProducts();
     setStoredProducts(current.filter((p) => p.id !== productId));
 
-    try {
-      await deleteDoc(doc(db, 'products', productId));
-      return true;
-    } catch (error) {
+    // 2. Cloud delete in background
+    deleteDoc(doc(db, 'products', productId)).catch((error) => {
       console.warn('Firestore deleteProduct notice (deleted from local cache):', error);
-      return true;
-    }
+    });
+
+    return true;
   },
 
   // Record click on an affiliate link in Firestore
@@ -264,8 +307,24 @@ export const databaseService = {
     }
   },
 
-  // Real-time listener for products
+  // Access cached products synchronously
+  getStoredProducts(): Product[] {
+    return getStoredProducts();
+  },
+
+  // Access cached click records synchronously
+  getStoredClicks(): ClickRecord[] {
+    return getStoredClicks();
+  },
+
+  // Real-time listener for products with instant local cache priming
   subscribeToProducts(onData: (products: Product[]) => void) {
+    // 1. Instantly feed stored cache so products appear on frame zero
+    const cached = getStoredProducts();
+    if (cached.length > 0) {
+      onData(cached);
+    }
+
     const path = 'products';
     return onSnapshot(
       query(collection(db, path), orderBy('createdAt', 'desc')),
@@ -276,17 +335,27 @@ export const databaseService = {
         });
         if (items.length > 0) {
           setStoredProducts(items);
-          onData(items);
+          onData(getStoredProducts());
+        } else if (!snapshot.metadata.fromCache) {
+          // If server confirmed no documents exist
+          onData([]);
         }
       },
       (error) => {
         console.warn('Firestore products subscription notice:', error);
+        // Ensure cached items remain visible on connection fluctuations
+        onData(getStoredProducts());
       }
     );
   },
 
-  // Real-time listener for clicks
+  // Real-time listener for clicks with instant cache priming
   subscribeToClicks(onData: (clicks: ClickRecord[]) => void) {
+    const cached = getStoredClicks();
+    if (cached.length > 0) {
+      onData(cached);
+    }
+
     const path = 'clicks';
     return onSnapshot(
       query(collection(db, path), orderBy('timestamp', 'desc'), limit(100)),

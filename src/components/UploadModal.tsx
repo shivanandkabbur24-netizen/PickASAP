@@ -1,5 +1,5 @@
-import React, { useState, useRef } from 'react';
-import { X, Upload, Link2, Sparkles, Check, Image as ImageIcon, AlertCircle } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { X, Upload, Link2, Sparkles, Check, Image as ImageIcon, AlertCircle, Loader2 } from 'lucide-react';
 import { Product, UserProfile, CategoryType, StoreType } from '../types';
 import { database as db } from '../lib/firebase';
 
@@ -28,6 +28,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   onProductCreated,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const isSubmittingRef = useRef(false);
 
   const [title, setTitle] = useState('');
   const [affiliateUrl, setAffiliateUrl] = useState('');
@@ -46,6 +47,14 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) {
+      isSubmittingRef.current = false;
+      setSubmitting(false);
+      setError('');
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -66,7 +75,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   const compressImage = (img: HTMLImageElement, rawDataUrl: string): string => {
     try {
       const canvas = document.createElement('canvas');
-      const MAX_DIM = 720;
+      const MAX_DIM = 640;
       let width = img.width;
       let height = img.height;
 
@@ -86,9 +95,11 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       canvas.height = height;
       const ctx = canvas.getContext('2d');
       if (ctx) {
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
         ctx.drawImage(img, 0, 0, width, height);
-        // High quality JPEG that stays under 100KB
-        return canvas.toDataURL('image/jpeg', 0.75);
+        // Fast, compact JPEG under 50KB for instant storage
+        return canvas.toDataURL('image/jpeg', 0.70);
       }
     } catch (err) {
       console.warn('Canvas optimization note, using source:', err);
@@ -150,6 +161,10 @@ export const UploadModal: React.FC<UploadModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingRef.current || submitting) {
+      return;
+    }
+
     setError('');
 
     if (!title.trim()) {
@@ -177,6 +192,8 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       return;
     }
 
+    // Lock synchronous ref immediately to block any rapid clicks or duplicate submissions
+    isSubmittingRef.current = true;
     setSubmitting(true);
 
     try {
@@ -218,8 +235,13 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         clicksCount: 0,
       };
 
-      await db.addProduct(newProduct);
+      // 1. Immediately notify parent component for 0ms UI update
       onProductCreated(newProduct);
+
+      // 2. Persist to storage & cloud
+      await db.addProduct(newProduct);
+
+      // 3. Immediately close modal
       onClose();
 
       // Reset fields
@@ -235,6 +257,8 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     } catch (err: unknown) {
       console.error('Upload product caught error:', err);
       setError(err instanceof Error ? err.message : 'Upload was interrupted. Please try again.');
+      isSubmittingRef.current = false;
+      setSubmitting(false);
     } finally {
       setSubmitting(false);
     }
@@ -553,9 +577,13 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             type="button"
             onClick={handleSubmit}
             disabled={submitting}
-            className="px-6 py-2.5 rounded-xl bg-neutral-900 hover:bg-black dark:bg-white dark:hover:bg-neutral-200 text-white dark:text-neutral-950 text-sm font-semibold flex items-center gap-2 cursor-pointer transition-all shadow-md active:scale-95 disabled:opacity-60"
+            className="px-6 py-2.5 rounded-xl bg-neutral-900 hover:bg-black dark:bg-white dark:hover:bg-neutral-200 text-white dark:text-neutral-950 text-sm font-semibold flex items-center gap-2 cursor-pointer transition-all shadow-md active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
           >
-            <Sparkles className="w-4 h-4 text-amber-400 dark:text-amber-600" />
+            {submitting ? (
+              <Loader2 className="w-4 h-4 animate-spin text-amber-400 dark:text-amber-600" />
+            ) : (
+              <Sparkles className="w-4 h-4 text-amber-400 dark:text-amber-600" />
+            )}
             <span>{submitting ? 'Publishing...' : 'Publish Across Platform'}</span>
           </button>
         </div>

@@ -28,6 +28,7 @@ interface MagazineViewProps {
   onToggleFavorite: (productId: string) => void;
   onOpenUpload: () => void;
   isLoggedIn: boolean;
+  isLoading?: boolean;
 }
 
 const CATEGORIES: CategoryType[] = [
@@ -42,12 +43,170 @@ const CATEGORIES: CategoryType[] = [
 
 const STORES: StoreType[] = ['All', 'Amazon', 'Flipkart', 'Myntra', 'Other'];
 
+// Fast, smooth product card with progressive image loading & fallbacks
+const MagazineProductCard: React.FC<{
+  product: Product;
+  index: number;
+  isFav: boolean;
+  onToggleFavorite: (id: string) => void;
+  onOpenShare: (product: Product) => void;
+  onSelectProduct: (product: Product) => void;
+  onAffiliateClick: (e: React.MouseEvent, product: Product) => void;
+}> = ({
+  product,
+  index,
+  isFav,
+  onToggleFavorite,
+  onOpenShare,
+  onSelectProduct,
+  onAffiliateClick,
+}) => {
+  const [imgLoaded, setImgLoaded] = useState(false);
+  const [imgError, setImgError] = useState(false);
+
+  return (
+    <article
+      className="group flex flex-col justify-between bg-white dark:bg-[#111318] rounded-3xl border border-neutral-200/80 dark:border-neutral-800/80 overflow-hidden shadow-sm hover:shadow-xl hover:border-neutral-300 dark:hover:border-neutral-700 transition-all duration-300 animate-fade-in"
+    >
+      {/* Image Container with Store Badge and Favorite Button */}
+      <div className="relative aspect-[4/3] bg-neutral-100 dark:bg-neutral-900 overflow-hidden flex items-center justify-center">
+        {!imgLoaded && !imgError && (
+          <div className="absolute inset-0 bg-neutral-200/50 dark:bg-neutral-800/50 animate-pulse" />
+        )}
+
+        {imgError ? (
+          <div className="flex flex-col items-center justify-center p-6 text-center text-neutral-400">
+            <ShoppingBag className="w-10 h-10 mb-2 stroke-[1.2] text-neutral-300 dark:text-neutral-600" />
+            <span className="text-xs font-medium text-neutral-500">{product.store} Product</span>
+          </div>
+        ) : (
+          <img
+            src={product.imageUrl}
+            alt={product.title}
+            loading={index < 3 ? 'eager' : 'lazy'}
+            decoding="async"
+            referrerPolicy="no-referrer"
+            fetchPriority={index === 0 ? 'high' : 'auto'}
+            onLoad={() => setImgLoaded(true)}
+            onError={() => {
+              setImgLoaded(true);
+              setImgError(true);
+            }}
+            className={`w-full h-full object-cover group-hover:scale-105 transition-all duration-500 ${
+              imgLoaded ? 'opacity-100' : 'opacity-0'
+            }`}
+          />
+        )}
+
+        {/* Store Tag */}
+        <div className="absolute top-4 left-4 z-10 flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/95 dark:bg-neutral-900/95 backdrop-blur-md shadow-sm text-[11px] font-semibold text-neutral-800 dark:text-neutral-200 border border-neutral-200/50 dark:border-neutral-700/50">
+          <span className="w-1.5 h-1.5 rounded-full bg-[#FF6E40]" />
+          <span>{product.store}</span>
+        </div>
+
+        {/* Favorite Heart Button */}
+        <button
+          id={`fav-btn-${product.id}`}
+          onClick={() => onToggleFavorite(product.id)}
+          title={isFav ? 'Remove from saved' : 'Save to favorites'}
+          className={`absolute top-4 right-4 z-10 w-9 h-9 rounded-full backdrop-blur-md flex items-center justify-center transition-transform active:scale-90 cursor-pointer shadow-sm ${
+            isFav
+              ? 'bg-rose-500 text-white'
+              : 'bg-white/90 dark:bg-neutral-900/90 text-neutral-600 dark:text-neutral-300 hover:text-rose-500'
+          }`}
+        >
+          <Heart className={`w-4 h-4 ${isFav ? 'fill-white' : ''}`} />
+        </button>
+
+        {/* Discount Badge if available */}
+        {product.discountPercent && product.discountPercent > 0 && (
+          <div className="absolute bottom-4 left-4 z-10 px-2.5 py-0.5 rounded-md bg-emerald-600 text-white text-[10px] font-bold uppercase tracking-wider shadow">
+            {product.discountPercent}% OFF
+          </div>
+        )}
+      </div>
+
+      {/* Editorial Body */}
+      <div className="p-6 flex-1 flex flex-col justify-between space-y-4">
+        <div>
+          {/* Category and live click count */}
+          <div className="flex items-center justify-between text-[11px] text-neutral-400 dark:text-neutral-400 mb-2">
+            <span className="uppercase tracking-wider font-semibold">
+              {product.category}
+            </span>
+            <span className="font-mono text-[10px] text-neutral-600 dark:text-neutral-400">
+              {product.clicksCount || 0} clicks
+            </span>
+          </div>
+
+          {/* Title */}
+          <h3
+            onClick={() => onSelectProduct(product)}
+            className="font-heading-editorial text-xl font-bold text-neutral-900 dark:text-white leading-snug hover:text-[#FF6E40] transition-colors cursor-pointer"
+          >
+            {product.title}
+          </h3>
+
+          {/* Editorial Paragraph / Description */}
+          <p className="mt-3 text-sm text-neutral-600 dark:text-neutral-400 font-serif-editorial leading-relaxed line-clamp-3">
+            {product.editorialNote || product.description}
+          </p>
+        </div>
+
+        {/* Price and CTA */}
+        <div className="pt-4 border-t border-neutral-100 dark:border-neutral-800/80 flex items-center justify-between gap-3">
+          <div>
+            <div className="flex items-baseline gap-2">
+              <span className="text-xl font-bold font-sans text-neutral-900 dark:text-white">
+                {product.price}
+              </span>
+              {product.originalPrice && (
+                <span className="text-xs text-neutral-400 line-through">
+                  {product.originalPrice}
+                </span>
+              )}
+            </div>
+            <span className="text-[10px] text-neutral-400 block mt-0.5">
+              Verified Affiliate Partner
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              id={`share-btn-${product.id}`}
+              onClick={() => onOpenShare(product)}
+              title="Share affiliate link or post to social media"
+              className="px-3 py-2 rounded-xl border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-700 dark:text-neutral-200 hover:text-neutral-900 dark:hover:text-white text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-xs active:scale-95"
+            >
+              <Share2 className="w-3.5 h-3.5 text-neutral-500 dark:text-neutral-400" />
+              <span>Share</span>
+            </button>
+
+            <a
+              id={`shop-btn-${product.id}`}
+              href={product.affiliateUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => onAffiliateClick(e, product)}
+              className="px-4 py-2.5 rounded-xl bg-neutral-900 hover:bg-black dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-950 text-xs font-semibold flex items-center gap-1.5 transition-all shadow active:scale-95 cursor-pointer"
+            >
+              <span>Shop on {product.store}</span>
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </a>
+          </div>
+        </div>
+      </div>
+    </article>
+  );
+};
+
 export const MagazineView: React.FC<MagazineViewProps> = ({
   products,
   favorites,
   onToggleFavorite,
   onOpenUpload,
   isLoggedIn,
+  isLoading = false,
 }) => {
   // Initialize state from URL search params for direct deep-linking and SEO
   const [searchQuery, setSearchQuery] = useState<string>(() => {
@@ -549,7 +708,34 @@ export const MagazineView: React.FC<MagazineViewProps> = ({
         </div>
 
         {/* Product Grid / Editorial Showcase */}
-        {products.length === 0 ? (
+        {isLoading && products.length === 0 ? (
+          /* Instant smooth skeleton cards while first network fetch resolves */
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 sm:gap-10">
+            {[1, 2, 3].map((n) => (
+              <div
+                key={`skeleton-${n}`}
+                className="flex flex-col justify-between bg-white dark:bg-[#111318] rounded-3xl border border-neutral-200/80 dark:border-neutral-800/80 overflow-hidden animate-pulse shadow-xs"
+              >
+                <div className="aspect-[4/3] bg-neutral-200/70 dark:bg-neutral-800/70" />
+                <div className="p-6 space-y-4">
+                  <div className="flex justify-between items-center">
+                    <div className="h-3 w-20 bg-neutral-200 dark:bg-neutral-800 rounded" />
+                    <div className="h-3 w-12 bg-neutral-200 dark:bg-neutral-800 rounded" />
+                  </div>
+                  <div className="h-5 w-4/5 bg-neutral-200 dark:bg-neutral-800 rounded" />
+                  <div className="space-y-2">
+                    <div className="h-3 w-full bg-neutral-100 dark:bg-neutral-800/50 rounded" />
+                    <div className="h-3 w-3/4 bg-neutral-100 dark:bg-neutral-800/50 rounded" />
+                  </div>
+                  <div className="pt-4 border-t border-neutral-100 dark:border-neutral-800/80 flex justify-between items-center">
+                    <div className="h-5 w-20 bg-neutral-200 dark:bg-neutral-800 rounded" />
+                    <div className="h-9 w-28 bg-neutral-200 dark:bg-neutral-800 rounded-xl" />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : products.length === 0 ? (
           /* Strictly adhering to user prompt: "Don't add any product by yourself (AI) let the page be empty, once the website is ready i will upload my affiliate links." */
           <div className="py-20 px-6 max-w-2xl mx-auto text-center rounded-3xl border border-dashed border-neutral-200 dark:border-neutral-800 bg-neutral-50/50 dark:bg-neutral-900/20">
             <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-white dark:bg-neutral-800 shadow-sm border border-neutral-200/80 dark:border-neutral-700/80 flex items-center justify-center text-neutral-400">
@@ -604,122 +790,18 @@ export const MagazineView: React.FC<MagazineViewProps> = ({
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 sm:gap-10">
-            {filteredProducts.map((product) => {
-              const isFav = favorites.includes(product.id);
-              return (
-                <article
-                  key={product.id}
-                  className="group flex flex-col justify-between bg-white dark:bg-[#111318] rounded-3xl border border-neutral-200/80 dark:border-neutral-800/80 overflow-hidden shadow-sm hover:shadow-xl hover:border-neutral-300 dark:hover:border-neutral-700 transition-all duration-300 animate-fade-in"
-                >
-                  {/* Image Container with Store Badge and Favorite Button */}
-                  <div className="relative aspect-[4/3] bg-neutral-100 dark:bg-neutral-900 overflow-hidden flex items-center justify-center">
-                    <img
-                      src={product.imageUrl}
-                      alt={product.title}
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                    />
-
-                    {/* Store Tag */}
-                    <div className="absolute top-4 left-4 z-10 flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/95 dark:bg-neutral-900/95 backdrop-blur-md shadow-sm text-[11px] font-semibold text-neutral-800 dark:text-neutral-200 border border-neutral-200/50 dark:border-neutral-700/50">
-                      <span className="w-1.5 h-1.5 rounded-full bg-[#FF6E40]" />
-                      <span>{product.store}</span>
-                    </div>
-
-                    {/* Favorite Heart Button */}
-                    <button
-                      id={`fav-btn-${product.id}`}
-                      onClick={() => onToggleFavorite(product.id)}
-                      title={isFav ? 'Remove from saved' : 'Save to favorites'}
-                      className={`absolute top-4 right-4 z-10 w-9 h-9 rounded-full backdrop-blur-md flex items-center justify-center transition-transform active:scale-90 cursor-pointer shadow-sm ${
-                        isFav
-                          ? 'bg-rose-500 text-white'
-                          : 'bg-white/90 dark:bg-neutral-900/90 text-neutral-600 dark:text-neutral-300 hover:text-rose-500'
-                      }`}
-                    >
-                      <Heart className={`w-4 h-4 ${isFav ? 'fill-white' : ''}`} />
-                    </button>
-
-                    {/* Discount Badge if available */}
-                    {product.discountPercent && product.discountPercent > 0 && (
-                      <div className="absolute bottom-4 left-4 z-10 px-2.5 py-0.5 rounded-md bg-emerald-600 text-white text-[10px] font-bold uppercase tracking-wider shadow">
-                        {product.discountPercent}% OFF
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Editorial Body */}
-                  <div className="p-6 flex-1 flex flex-col justify-between space-y-4">
-                    <div>
-                      {/* Category and live click count */}
-                      <div className="flex items-center justify-between text-[11px] text-neutral-400 dark:text-neutral-400 mb-2">
-                        <span className="uppercase tracking-wider font-semibold">
-                          {product.category}
-                        </span>
-                        <span className="font-mono text-[10px] text-neutral-600 dark:text-neutral-400">
-                          {product.clicksCount || 0} clicks
-                        </span>
-                      </div>
-
-                      {/* Title */}
-                      <h3
-                        onClick={() => setSelectedProductForModal(product)}
-                        className="font-heading-editorial text-xl font-bold text-neutral-900 dark:text-white leading-snug hover:text-amber-600 dark:hover:text-amber-400 transition-colors cursor-pointer"
-                      >
-                        {product.title}
-                      </h3>
-
-                      {/* Editorial Paragraph / Description with generous whitespace */}
-                      <p className="mt-3 text-sm text-neutral-600 dark:text-neutral-400 font-serif-editorial leading-relaxed line-clamp-3">
-                        {product.editorialNote || product.description}
-                      </p>
-                    </div>
-
-                    {/* Price and CTA */}
-                    <div className="pt-4 border-t border-neutral-100 dark:border-neutral-800/80 flex items-center justify-between gap-3">
-                      <div>
-                        <div className="flex items-baseline gap-2">
-                          <span className="text-xl font-bold font-sans text-neutral-900 dark:text-white">
-                            {product.price}
-                          </span>
-                          {product.originalPrice && (
-                            <span className="text-xs text-neutral-400 line-through">
-                              {product.originalPrice}
-                            </span>
-                          )}
-                        </div>
-                        <span className="text-[10px] text-neutral-400 block mt-0.5">
-                          Verified Affiliate Partner
-                        </span>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        <button
-                          id={`share-btn-${product.id}`}
-                          onClick={() => handleOpenShare(product)}
-                          title="Share affiliate link or post to social media"
-                          className="px-3 py-2 rounded-xl border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-700 dark:text-neutral-200 hover:text-neutral-900 dark:hover:text-white text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-xs active:scale-95"
-                        >
-                          <Share2 className="w-3.5 h-3.5 text-neutral-500 dark:text-neutral-400" />
-                          <span>Share</span>
-                        </button>
-
-                        <a
-                          id={`shop-btn-${product.id}`}
-                          href={product.affiliateUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={(e) => handleAffiliateClick(e, product)}
-                          className="px-4 py-2.5 rounded-xl bg-neutral-900 hover:bg-black dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-950 text-xs font-semibold flex items-center gap-1.5 transition-all shadow active:scale-95 cursor-pointer"
-                        >
-                          <span>Shop on {product.store}</span>
-                          <ArrowUpRight className="w-3.5 h-3.5" />
-                        </a>
-                      </div>
-                    </div>
-                  </div>
-                </article>
-              );
-            })}
+            {filteredProducts.map((product, index) => (
+              <MagazineProductCard
+                key={product.id}
+                product={product}
+                index={index}
+                isFav={favorites.includes(product.id)}
+                onToggleFavorite={onToggleFavorite}
+                onOpenShare={handleOpenShare}
+                onSelectProduct={setSelectedProductForModal}
+                onAffiliateClick={handleAffiliateClick}
+              />
+            ))}
           </div>
         )}
       </main>

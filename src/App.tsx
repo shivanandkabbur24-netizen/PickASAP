@@ -16,9 +16,11 @@ import { ShoppingBag, ShieldCheck, Sparkles, Tag, ExternalLink } from 'lucide-re
 export default function App() {
   // State management
   const [currentView, setCurrentView] = useState<'magazine' | 'dashboard' | 'login'>('magazine');
-  const [user, setUser] = useState<UserProfile | null>(null);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [favorites, setFavorites] = useState<string[]>([]);
+  const [user, setUser] = useState<UserProfile | null>(() => db.getCurrentUser());
+  // Synchronous cache retrieval ensures user-uploaded products render in 0ms on initial frame
+  const [products, setProducts] = useState<Product[]>(() => db.getStoredProducts());
+  const [isProductsLoading, setIsProductsLoading] = useState<boolean>(() => db.getStoredProducts().length === 0);
+  const [favorites, setFavorites] = useState<string[]>(() => db.getFavorites());
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [darkMode, setDarkMode] = useState<boolean>(() => {
     try {
@@ -45,21 +47,23 @@ export default function App() {
     }
   }, [darkMode]);
 
-  // Load initial data
+  // Real-time synchronization and live updates
   useEffect(() => {
-    // Current user
-    const existingUser = db.getCurrentUser();
-    if (existingUser) {
-      setUser(existingUser);
-    }
-
-    // Products (strictly empty initially unless uploaded by user)
-    db.getProducts().then((data) => {
-      setProducts(data);
+    // 1. Subscribe to products with instant local cache feed and live Firestore updates
+    const unsubscribeProducts = db.subscribeToProducts((liveProducts) => {
+      setProducts(liveProducts);
+      setIsProductsLoading(false);
     });
 
-    // Favorites
-    setFavorites(db.getFavorites());
+    // 2. Fast parallel check in case onSnapshot needs an immediate resolution
+    db.getProducts().then((data) => {
+      if (data && data.length > 0) {
+        setProducts(data);
+      }
+      setIsProductsLoading(false);
+    }).catch(() => {
+      setIsProductsLoading(false);
+    });
 
     // Listen to real-time click events
     const handleRealtimeClick = (e: CustomEvent<{ product: Product; clicksCount: number }>) => {
@@ -89,6 +93,7 @@ export default function App() {
     window.addEventListener('pickasap:favorites_changed', handleFavChange as EventListener);
 
     return () => {
+      unsubscribeProducts();
       window.removeEventListener('pickasap:click_recorded', handleRealtimeClick as EventListener);
       window.removeEventListener('pickasap:auth_changed', handleAuthChange as EventListener);
       window.removeEventListener('pickasap:favorites_changed', handleFavChange as EventListener);
@@ -109,14 +114,25 @@ export default function App() {
   };
 
   const handleProductCreated = (newProduct: Product) => {
-    setProducts((prev) => [newProduct, ...prev]);
+    setProducts((prev) => {
+      const comboKey = `${(newProduct.affiliateUrl || '').trim()}::${(newProduct.title || '').trim().toLowerCase()}`;
+      if (
+        prev.some(
+          (p) =>
+            p.id === newProduct.id ||
+            `${(p.affiliateUrl || '').trim()}::${(p.title || '').trim().toLowerCase()}` === comboKey
+        )
+      ) {
+        return prev;
+      }
+      return [newProduct, ...prev];
+    });
   };
 
   const handleDeleteProduct = async (productId: string) => {
-    if (window.confirm('Are you sure you want to remove this affiliate product?')) {
-      await db.deleteProduct(productId);
-      setProducts((prev) => prev.filter((p) => p.id !== productId));
-    }
+    // Remove immediately from state without window.confirm (which is blocked by sandboxed iframes)
+    setProducts((prev) => prev.filter((p) => p.id !== productId));
+    await db.deleteProduct(productId);
   };
 
   const handleToggleFavorite = (productId: string) => {
@@ -168,6 +184,7 @@ export default function App() {
           <MagazineView
             products={products}
             favorites={favorites}
+            isLoading={isProductsLoading}
             onToggleFavorite={handleToggleFavorite}
             onOpenUpload={() => {
               if (!user) {

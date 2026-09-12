@@ -26,18 +26,17 @@ export const Navbar: React.FC<NavbarProps> = ({
 }) => {
   return (
     <header className="sticky top-0 z-40 w-full bg-white/95 dark:bg-[#0c0c0d]/95 backdrop-blur-md border-b border-neutral-200/80 dark:border-neutral-800/80 transition-colors">
-      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 h-18 flex items-center justify-between">
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 h-18 sm:h-20 flex items-center justify-between">
         {/* Left: Brand Logo matching the user's uploaded logo */}
         <div
+          id="brand-logo-btn"
           onClick={() => setCurrentView('magazine')}
-          className="cursor-pointer group flex items-center shrink-0"
+          className="cursor-pointer group flex items-center shrink-0 py-1"
+          role="button"
+          tabIndex={0}
+          title="PickASAP Home"
         >
-          <div className="sm:hidden">
-            <PickAsapLogo size="sm" showWordmark={true} />
-          </div>
-          <div className="hidden sm:block">
-            <PickAsapLogo size="md" showWordmark={true} />
-          </div>
+          <PickAsapLogo size="responsive" showWordmark={true} />
         </div>
 
         {/* Center / Right Links */}

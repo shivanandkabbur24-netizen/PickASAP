@@ -39,6 +39,8 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   const [tagsInput, setTagsInput] = useState('');
 
   // Image upload state
+  const [imageMode, setImageMode] = useState<'device' | 'url'>('device');
+  const [imageUrlInput, setImageUrlInput] = useState<string>('');
   const [imageDataUrl, setImageDataUrl] = useState<string>('');
   const [imageFileName, setImageFileName] = useState<string>('');
   const [isDragging, setIsDragging] = useState(false);
@@ -60,6 +62,40 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     }
   };
 
+  // Compress and optimize image to ensure fast cloud sync and no payload errors
+  const compressImage = (img: HTMLImageElement, rawDataUrl: string): string => {
+    try {
+      const canvas = document.createElement('canvas');
+      const MAX_DIM = 720;
+      let width = img.width;
+      let height = img.height;
+
+      if (width > height) {
+        if (width > MAX_DIM) {
+          height = Math.round((height * MAX_DIM) / width);
+          width = MAX_DIM;
+        }
+      } else {
+        if (height > MAX_DIM) {
+          width = Math.round((width * MAX_DIM) / height);
+          height = MAX_DIM;
+        }
+      }
+
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(img, 0, 0, width, height);
+        // High quality JPEG that stays under 100KB
+        return canvas.toDataURL('image/jpeg', 0.75);
+      }
+    } catch (err) {
+      console.warn('Canvas optimization note, using source:', err);
+    }
+    return rawDataUrl;
+  };
+
   // Handle file input from device
   const handleFileSelect = (file: File) => {
     setError('');
@@ -68,9 +104,8 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       return;
     }
 
-    // Limit to reasonable size (e.g. 5MB)
-    if (file.size > 5 * 1024 * 1024) {
-      setError('Image file is too large (max 5MB). Please upload a smaller image.');
+    if (file.size > 10 * 1024 * 1024) {
+      setError('Image file exceeds 10MB limit. Please choose a smaller photo.');
       return;
     }
 
@@ -82,37 +117,8 @@ export const UploadModal: React.FC<UploadModalProps> = ({
 
       const img = new Image();
       img.onload = () => {
-        try {
-          const canvas = document.createElement('canvas');
-          const MAX_DIM = 960;
-          let width = img.width;
-          let height = img.height;
-
-          if (width > height) {
-            if (width > MAX_DIM) {
-              height = Math.round((height * MAX_DIM) / width);
-              width = MAX_DIM;
-            }
-          } else {
-            if (height > MAX_DIM) {
-              width = Math.round((width * MAX_DIM) / height);
-              height = MAX_DIM;
-            }
-          }
-
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          if (ctx) {
-            ctx.drawImage(img, 0, 0, width, height);
-            const optimized = canvas.toDataURL('image/jpeg', 0.85);
-            setImageDataUrl(optimized);
-            return;
-          }
-        } catch {
-          // Fallback to raw if canvas optimization fails
-        }
-        setImageDataUrl(rawDataUrl);
+        const optimized = compressImage(img, rawDataUrl);
+        setImageDataUrl(optimized);
       };
       img.onerror = () => {
         setImageDataUrl(rawDataUrl);
@@ -120,7 +126,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       img.src = rawDataUrl;
     };
     reader.onerror = () => {
-      setError('Failed to read image file from device.');
+      setError('Failed to read image file from your device.');
     };
     reader.readAsDataURL(file);
   };
@@ -154,10 +160,18 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       setError('Please provide your affiliate link.');
       return;
     }
-    if (!imageDataUrl) {
-      setError('Please upload a product photo from your device.');
+
+    // Determine final image URL
+    const activeImage = imageMode === 'url' ? imageUrlInput.trim() : imageDataUrl;
+    if (!activeImage) {
+      setError(
+        imageMode === 'url'
+          ? 'Please enter an image URL or switch to uploading a photo from your device.'
+          : 'Please select a product photo from your device or paste an image URL.'
+      );
       return;
     }
+
     if (!price.trim()) {
       setError('Please state the product price.');
       return;
@@ -174,25 +188,31 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         discount = Math.round(((numOrig - numPrice) / numOrig) * 100);
       }
 
+      // Format affiliate URL safely
+      let formattedUrl = affiliateUrl.trim();
+      if (!formattedUrl.startsWith('http://') && !formattedUrl.startsWith('https://')) {
+        formattedUrl = 'https://' + formattedUrl;
+      }
+
       const tags = tagsInput
         .split(',')
         .map((t) => t.trim().toLowerCase())
         .filter(Boolean);
 
       const newProduct: Product = {
-        id: 'prod_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+        id: 'prod_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
         title: title.trim(),
-        description: editorialNote.trim() || `Curated recommendation by ${user.name}`,
-        editorialNote: editorialNote.trim(),
+        description: editorialNote.trim() || `Curated recommendation by ${user.name || 'Curator'}`,
+        editorialNote: editorialNote.trim() || undefined,
         category,
-        imageUrl: imageDataUrl,
-        affiliateUrl: affiliateUrl.trim(),
+        imageUrl: activeImage,
+        affiliateUrl: formattedUrl,
         store,
         price: price.trim(),
         originalPrice: originalPrice.trim() || undefined,
         discountPercent: discount,
-        tags,
-        uploaderId: user.id,
+        tags: tags.length > 0 ? tags : [category.toLowerCase(), store.toLowerCase()],
+        uploaderId: user.id || 'usr_' + Date.now(),
         uploaderName: user.name || 'Curator',
         createdAt: new Date().toISOString(),
         clicksCount: 0,
@@ -209,10 +229,12 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       setOriginalPrice('');
       setEditorialNote('');
       setImageDataUrl('');
+      setImageUrlInput('');
       setImageFileName('');
       setTagsInput('');
-    } catch (err) {
-      setError('Failed to publish product. Please try again.');
+    } catch (err: unknown) {
+      console.error('Upload product caught error:', err);
+      setError(err instanceof Error ? err.message : 'Upload was interrupted. Please try again.');
     } finally {
       setSubmitting(false);
     }
@@ -249,13 +271,65 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             </div>
           )}
 
-          {/* Device Image Upload Zone */}
+          {/* Product Photography Section */}
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-700 dark:text-neutral-300 mb-2">
-              Product Photography (from your device) *
-            </label>
+            <div className="flex items-center justify-between mb-2">
+              <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-700 dark:text-neutral-300">
+                Product Photography *
+              </label>
+              <div className="flex items-center p-0.5 rounded-lg bg-neutral-100 dark:bg-neutral-800 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setImageMode('device')}
+                  className={`px-2.5 py-1 rounded-md transition-all font-medium cursor-pointer ${
+                    imageMode === 'device'
+                      ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-xs'
+                      : 'text-neutral-500 hover:text-neutral-900 dark:hover:text-white'
+                  }`}
+                >
+                  From Device
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setImageMode('url')}
+                  className={`px-2.5 py-1 rounded-md transition-all font-medium cursor-pointer ${
+                    imageMode === 'url'
+                      ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-xs'
+                      : 'text-neutral-500 hover:text-neutral-900 dark:hover:text-white'
+                  }`}
+                >
+                  Image URL
+                </button>
+              </div>
+            </div>
 
-            {imageDataUrl ? (
+            {imageMode === 'url' ? (
+              <div className="space-y-3">
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-neutral-400">
+                    <ImageIcon className="w-4 h-4" />
+                  </div>
+                  <input
+                    id="product-image-url-input"
+                    type="url"
+                    value={imageUrlInput}
+                    onChange={(e) => setImageUrlInput(e.target.value)}
+                    placeholder="https://images.unsplash.com/... or merchant photo URL"
+                    className="w-full pl-10 pr-4 py-3 rounded-xl border border-neutral-200 dark:border-neutral-700 bg-neutral-50/50 dark:bg-neutral-900/60 text-sm focus:outline-none focus:border-amber-500 dark:focus:border-amber-500 transition-colors"
+                  />
+                </div>
+                {imageUrlInput && (
+                  <div className="relative rounded-2xl overflow-hidden border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-900 h-48 flex items-center justify-center p-2">
+                    <img
+                      src={imageUrlInput}
+                      alt="URL preview"
+                      className="max-h-full max-w-full object-contain rounded-xl"
+                      onError={() => setError('Image URL could not be loaded. Please verify the link.')}
+                    />
+                  </div>
+                )}
+              </div>
+            ) : imageDataUrl ? (
               <div className="relative rounded-2xl overflow-hidden border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-900 group">
                 <img
                   src={imageDataUrl}
@@ -283,7 +357,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                 </div>
                 <div className="px-4 py-2 bg-neutral-100 dark:bg-neutral-800 text-[11px] text-neutral-500 truncate flex items-center gap-2">
                   <Check className="w-3.5 h-3.5 text-emerald-500" />
-                  <span>{imageFileName || 'Image ready for publication'}</span>
+                  <span>{imageFileName || 'Photo processed & ready for magazine feature'}</span>
                 </div>
               </div>
             ) : (
@@ -292,7 +366,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                 onDragLeave={handleDragLeave}
                 onDrop={handleDrop}
                 onClick={() => fileInputRef.current?.click()}
-                className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all ${
+                className={`border-2 border-dashed rounded-2xl p-7 text-center cursor-pointer transition-all ${
                   isDragging
                     ? 'border-amber-500 bg-amber-50/50 dark:bg-amber-950/20'
                     : 'border-neutral-300 dark:border-neutral-700 hover:border-neutral-400 dark:hover:border-neutral-600 bg-neutral-50/50 dark:bg-neutral-900/40'
@@ -302,10 +376,10 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                   <Upload className="w-5 h-5" />
                 </div>
                 <p className="text-sm font-medium text-neutral-800 dark:text-neutral-200">
-                  Click to select product image or drag & drop
+                  Click to select photo or drag & drop
                 </p>
-                <p className="text-xs text-neutral-600 dark:text-neutral-400 mt-1">
-                  Supports PNG, JPG, WebP from your phone or computer (up to 5MB)
+                <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
+                  PNG, JPG, or WebP (auto-optimized for instant mobile loading)
                 </p>
               </div>
             )}

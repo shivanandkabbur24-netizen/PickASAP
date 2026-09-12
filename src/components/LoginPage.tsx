@@ -116,7 +116,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onSuccess, onCancel }) => 
     setError('');
     try {
       const googleUser = await db.signInWithGoogle();
-      onSuccess(googleUser);
+      if (googleUser) {
+        onSuccess(googleUser);
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Google sign-in encountered an issue. Please try again.';
       setError(msg);

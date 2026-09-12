@@ -32,12 +32,12 @@
         "imageUrl": {
           "type": "string",
           "description": "Product visual preview image URL or photo data URI",
-          "maxLength": 350000
+          "maxLength": 1000000
         },
         "affiliateUrl": {
           "type": "string",
           "description": "Direct affiliate referral link",
-          "maxLength": 2000
+          "maxLength": 3000
         },
         "store": {
           "type": "string",
@@ -47,12 +47,12 @@
         "price": {
           "type": "string",
           "description": "Current listed retail price",
-          "maxLength": 50
+          "maxLength": 100
         },
         "originalPrice": {
           "type": "string",
           "description": "Previous retail price before discount",
-          "maxLength": 50
+          "maxLength": 100
         },
         "discountPercent": {
           "type": "number",

@@ -35,7 +35,7 @@ Cloudflare will prompt you to create or link the project `pickasap` and deploy t
 - `public/_redirects`: Directs all paths (`/*`) to `/index.html` with a 200 status code for client-side single-page routing.
 - `public/_headers`: Enforces browser caching on hashed bundles in `/assets/` and prevents stale caching on `index.html`.
 - `public/_routes.json`: Excludes static assets from worker intercepts.
-- `wrangler.toml` & `wrangler.jsonc`: Pre-configured for Vite's `dist/` directory and SPA mode.
+- `wrangler.jsonc`: Pre-configured with `pages_build_output_dir = "dist"` for Cloudflare Pages.
 - `.nvmrc` & `.node-version`: Pin Node 20 to avoid build failures with Tailwind v4 and Vite 6.
 
 ---

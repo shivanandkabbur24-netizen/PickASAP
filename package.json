@@ -6,9 +6,12 @@
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
     "build": "vite build",
+    "pages:build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
+    "deploy:firebase": "npm run build && firebase deploy --only hosting",
+    "deploy:cloudflare": "npm run build && npx wrangler pages deploy dist",
     "deploy:hosting": "npm run build && firebase deploy --only hosting"
   },
   "dependencies": {

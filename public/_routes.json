@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "include": [
+    "/*"
+  ],
+  "exclude": [
+    "/assets/*",
+    "/pickasap-og-banner.svg",
+    "/robots.txt",
+    "/sitemap.xml",
+    "/_headers",
+    "/_redirects"
+  ]
+}

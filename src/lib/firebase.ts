@@ -421,6 +421,11 @@ export const databaseService = {
       if (authError?.code === 'auth/popup-blocked') {
         throw new Error('Google Sign-In popup was blocked by your browser. Please allow popups to continue.');
       }
+      if (authError?.code === 'auth/unauthorized-domain' || authError?.message?.includes('unauthorized-domain')) {
+        throw new Error(
+          'This domain is not authorized in Firebase Authentication. In Firebase Console, go to Authentication > Settings > Authorized Domains, and add your domain (e.g. your *.pages.dev or custom domain).'
+        );
+      }
       console.warn('Firebase Google Sign-In notice:', authError?.message || err);
       throw new Error(authError?.message || 'Google sign-in could not be completed. Please try again.');
     }

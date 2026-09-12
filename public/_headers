@@ -1,0 +1,28 @@
+# Cloudflare Pages Headers Configuration
+
+# Global Security & Performance Defaults
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: SAMEORIGIN
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
+
+# Immutable caching for hashed Vite build bundles
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Cache images, fonts, and media assets
+/*.svg
+  Cache-Control: public, max-age=604800
+/*.png
+  Cache-Control: public, max-age=604800
+/*.jpg
+  Cache-Control: public, max-age=604800
+/*.webp
+  Cache-Control: public, max-age=604800
+/*.ico
+  Cache-Control: public, max-age=604800
+
+# Never cache index.html so users always receive fresh app code on redeploy
+/index.html
+  Cache-Control: no-cache, no-store, must-revalidate

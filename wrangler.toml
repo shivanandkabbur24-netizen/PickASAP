@@ -1,0 +1,9 @@
+name = "pickasap"
+compatibility_date = "2024-09-23"
+pages_build_output_dir = "dist"
+
+# Configuration for Cloudflare Pages and Workers Assets
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"

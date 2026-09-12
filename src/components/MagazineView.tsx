@@ -765,7 +765,7 @@ export const MagazineView: React.FC<MagazineViewProps> = ({
               className="px-6 py-3 rounded-full bg-neutral-900 hover:bg-black dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-950 text-xs uppercase tracking-widest font-semibold inline-flex items-center gap-2 shadow-md transition-all active:scale-95 cursor-pointer"
             >
               <Sparkles className="w-4 h-4 text-[#FF6E40]" />
-              <span>{isLoggedIn ? 'Upload Product Now (+)' : 'Upload Your Own Affiliate Links'}</span>
+              <span>{isLoggedIn ? 'Add Affiliate Link (+)' : 'Add Your Own Affiliate Link'}</span>
             </button>
           </div>
         ) : filteredProducts.length === 0 ? (

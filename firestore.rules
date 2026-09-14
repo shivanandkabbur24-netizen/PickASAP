@@ -41,6 +41,7 @@ service cloud.firestore {
              (!('originalPrice' in data) || (data.originalPrice is string && data.originalPrice.size() <= 100)) &&
              (!('discountPercent' in data) || data.discountPercent is number) &&
              (!('tags' in data) || (data.tags is list && data.tags.size() <= 50)) &&
+             (!('images' in data) || (data.images is list && data.images.size() <= 15)) &&
              (!('clicksCount' in data) || data.clicksCount is number);
     }
 

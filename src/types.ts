@@ -5,6 +5,7 @@ export interface Product {
   editorialNote?: string;
   category: string;
   imageUrl: string;
+  images?: string[];
   affiliateUrl: string;
   store: 'Amazon' | 'Flipkart' | 'Myntra' | 'Other' | string;
   price: string;

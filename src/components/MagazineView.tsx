@@ -18,9 +18,11 @@ import {
   Send,
   Tag,
   TrendingUp,
+  Layers,
 } from 'lucide-react';
 import { Product, CategoryType, StoreType, SortOption } from '../types';
 import { database as db } from '../lib/firebase';
+import { ProductDetailModal } from './ProductDetailModal';
 
 interface MagazineViewProps {
   products: Product[];
@@ -69,7 +71,10 @@ const MagazineProductCard: React.FC<{
       className="group flex flex-col justify-between bg-white dark:bg-[#111318] rounded-3xl border border-neutral-200/80 dark:border-neutral-800/80 overflow-hidden shadow-sm hover:shadow-xl hover:border-neutral-300 dark:hover:border-neutral-700 transition-all duration-300 animate-fade-in"
     >
       {/* Image Container with Store Badge and Favorite Button */}
-      <div className="relative aspect-[4/3] bg-neutral-100 dark:bg-neutral-900 overflow-hidden flex items-center justify-center">
+      <div
+        onClick={() => onSelectProduct(product)}
+        className="relative aspect-[4/3] bg-neutral-100 dark:bg-neutral-900 overflow-hidden flex items-center justify-center cursor-pointer group/image"
+      >
         {!imgLoaded && !imgError && (
           <div className="absolute inset-0 bg-neutral-200/50 dark:bg-neutral-800/50 animate-pulse" />
         )}
@@ -92,10 +97,18 @@ const MagazineProductCard: React.FC<{
               setImgLoaded(true);
               setImgError(true);
             }}
-            className={`w-full h-full object-cover group-hover:scale-105 transition-all duration-500 ${
+            className={`w-full h-full object-cover group-hover/image:scale-105 transition-all duration-500 ${
               imgLoaded ? 'opacity-100' : 'opacity-0'
             }`}
           />
+        )}
+
+        {/* Multi-image photo count badge */}
+        {product.images && product.images.length > 1 && (
+          <div className="absolute bottom-4 right-4 z-10 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/70 backdrop-blur-md text-white text-[11px] font-medium shadow-sm">
+            <Layers className="w-3 h-3 text-[#FF6E40]" />
+            <span>{product.images.length} photos</span>
+          </div>
         )}
 
         {/* Store Tag */}
@@ -107,7 +120,10 @@ const MagazineProductCard: React.FC<{
         {/* Favorite Heart Button */}
         <button
           id={`fav-btn-${product.id}`}
-          onClick={() => onToggleFavorite(product.id)}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleFavorite(product.id);
+          }}
           title={isFav ? 'Remove from saved' : 'Save to favorites'}
           className={`absolute top-4 right-4 z-10 w-9 h-9 rounded-full backdrop-blur-md flex items-center justify-center transition-transform active:scale-90 cursor-pointer shadow-sm ${
             isFav
@@ -806,77 +822,15 @@ export const MagazineView: React.FC<MagazineViewProps> = ({
         )}
       </main>
 
-      {/* Product Detail Modal */}
-      {selectedProductForModal && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
-          <div className="bg-white dark:bg-[#12141a] text-neutral-900 dark:text-white rounded-3xl w-full max-w-2xl border border-neutral-200 dark:border-neutral-800 shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
-            <div className="relative aspect-[16/9] bg-neutral-100 dark:bg-neutral-900">
-              <img
-                src={selectedProductForModal.imageUrl}
-                alt={selectedProductForModal.title}
-                className="w-full h-full object-contain p-6"
-              />
-              <button
-                onClick={() => setSelectedProductForModal(null)}
-                className="absolute top-4 right-4 w-9 h-9 rounded-full bg-black/60 text-white flex items-center justify-center cursor-pointer hover:bg-black"
-              >
-                ✕
-              </button>
-            </div>
-            <div className="p-6 overflow-y-auto space-y-4">
-              <div className="flex items-center gap-2">
-                <span className="px-2.5 py-0.5 rounded-md bg-neutral-100 dark:bg-neutral-800 text-xs font-semibold">
-                  {selectedProductForModal.store}
-                </span>
-                <span className="text-xs text-neutral-400">
-                  {selectedProductForModal.category}
-                </span>
-              </div>
-              <h2 className="font-heading-editorial text-2xl font-bold">
-                {selectedProductForModal.title}
-              </h2>
-              <div className="text-sm font-serif-editorial leading-relaxed text-neutral-600 dark:text-neutral-300 whitespace-pre-line space-y-4">
-                <p>
-                  {selectedProductForModal.editorialNote || selectedProductForModal.description}
-                </p>
-              </div>
-              <div className="pt-4 border-t border-neutral-100 dark:border-neutral-800 flex items-center justify-between gap-4">
-                <div>
-                  <span className="text-2xl font-bold font-sans">
-                    {selectedProductForModal.price}
-                  </span>
-                  {selectedProductForModal.originalPrice &&
-                    selectedProductForModal.originalPrice !== selectedProductForModal.price && (
-                      <span className="text-xs text-neutral-400 line-through ml-2">
-                        {selectedProductForModal.originalPrice}
-                      </span>
-                    )}
-                </div>
-                <div className="flex items-center gap-3">
-                  <button
-                    id={`detail-share-btn-${selectedProductForModal.id}`}
-                    onClick={() => handleOpenShare(selectedProductForModal)}
-                    className="px-4 py-2.5 rounded-xl border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-700 dark:text-neutral-200 font-semibold text-xs flex items-center gap-1.5 cursor-pointer transition-colors"
-                  >
-                    <Share2 className="w-3.5 h-3.5" />
-                    <span>Share</span>
-                  </button>
-                  <a
-                    href={selectedProductForModal.affiliateUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={(e) => handleAffiliateClick(e, selectedProductForModal)}
-                    className="px-6 py-2.5 rounded-xl bg-neutral-900 dark:bg-white text-white dark:text-neutral-950 font-semibold text-xs flex items-center gap-2 cursor-pointer shadow"
-                  >
-                    <span>Shop on {selectedProductForModal.store}</span>
-                    <ArrowUpRight className="w-4 h-4" />
-                  </a>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Showcase Product Details & Multi-Image Gallery Modal */}
+      <ProductDetailModal
+        product={selectedProductForModal}
+        onClose={() => setSelectedProductForModal(null)}
+        isFav={selectedProductForModal ? favorites.includes(selectedProductForModal.id) : false}
+        onToggleFavorite={onToggleFavorite}
+        onOpenShare={handleOpenShare}
+        onAffiliateClick={handleAffiliateClick}
+      />
 
       {/* Share Product & Affiliate Link Modal */}
       {shareProduct && (

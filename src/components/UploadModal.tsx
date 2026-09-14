@@ -1,5 +1,18 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { X, Upload, Link2, Sparkles, Check, Image as ImageIcon, AlertCircle, Loader2 } from 'lucide-react';
+import {
+  X,
+  Upload,
+  Link2,
+  Sparkles,
+  Check,
+  Image as ImageIcon,
+  AlertCircle,
+  Loader2,
+  Trash2,
+  Plus,
+  Star,
+  Layers,
+} from 'lucide-react';
 import { Product, UserProfile, CategoryType, StoreType } from '../types';
 import { database as db } from '../lib/firebase';
 
@@ -38,12 +51,13 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   const [editorialNote, setEditorialNote] = useState('');
   const [tagsInput, setTagsInput] = useState('');
 
-  // Image upload state
+  // Multi-Image upload state
+  const [images, setImages] = useState<string[]>([]);
+  const [activePreviewIdx, setActivePreviewIdx] = useState<number>(0);
   const [imageMode, setImageMode] = useState<'device' | 'url'>('device');
   const [imageUrlInput, setImageUrlInput] = useState<string>('');
-  const [imageDataUrl, setImageDataUrl] = useState<string>('');
-  const [imageFileName, setImageFileName] = useState<string>('');
   const [isDragging, setIsDragging] = useState(false);
+  const [isProcessingImages, setIsProcessingImages] = useState(false);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -104,11 +118,11 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     }
   };
 
-  // Compress and optimize image to ensure fast cloud sync and no payload errors
+  // Compress and optimize image to ensure fast cloud sync and lightweight payload
   const compressImage = (img: HTMLImageElement, rawDataUrl: string): string => {
     try {
       const canvas = document.createElement('canvas');
-      const MAX_DIM = 640;
+      const MAX_DIM = 720;
       let width = img.width;
       let height = img.height;
 
@@ -131,8 +145,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
         ctx.drawImage(img, 0, 0, width, height);
-        // Fast, compact JPEG under 50KB for instant storage
-        return canvas.toDataURL('image/jpeg', 0.70);
+        return canvas.toDataURL('image/jpeg', 0.75);
       }
     } catch (err) {
       console.warn('Canvas optimization note, using source:', err);
@@ -140,39 +153,110 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     return rawDataUrl;
   };
 
-  // Handle file input from device
-  const handleFileSelect = (file: File) => {
+  const processFileToDataUrl = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      if (!file.type.startsWith('image/')) {
+        reject(new Error(`"${file.name}" is not an image file.`));
+        return;
+      }
+      if (file.size > 12 * 1024 * 1024) {
+        reject(new Error(`"${file.name}" exceeds 12MB limit.`));
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const rawDataUrl = e.target?.result as string;
+        if (!rawDataUrl) {
+          reject(new Error('File reading resulted in empty data.'));
+          return;
+        }
+        const img = new Image();
+        img.onload = () => {
+          const optimized = compressImage(img, rawDataUrl);
+          resolve(optimized);
+        };
+        img.onerror = () => resolve(rawDataUrl);
+        img.src = rawDataUrl;
+      };
+      reader.onerror = () => reject(new Error('Failed to read file from disk.'));
+      reader.readAsDataURL(file);
+    });
+  };
+
+  // Handle multiple files selection from device
+  const handleFilesSelect = async (fileList: FileList | File[]) => {
     setError('');
-    if (!file.type.startsWith('image/')) {
-      setError('Please choose a valid image file (PNG, JPG, WebP).');
+    const files = Array.from(fileList).filter((f) => f.type.startsWith('image/'));
+    if (files.length === 0) {
+      setError('Please select valid image files (PNG, JPG, WebP).');
       return;
     }
 
-    if (file.size > 10 * 1024 * 1024) {
-      setError('Image file exceeds 10MB limit. Please choose a smaller photo.');
-      return;
+    if (images.length + files.length > 10) {
+      setError('You can add up to 10 images per product.');
     }
 
-    setImageFileName(file.name);
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const rawDataUrl = e.target?.result as string;
-      if (!rawDataUrl) return;
+    setIsProcessingImages(true);
+    try {
+      const remainingSlots = Math.max(0, 10 - images.length);
+      const toProcess = files.slice(0, remainingSlots > 0 ? remainingSlots : 1);
+      const processed = await Promise.all(toProcess.map((f) => processFileToDataUrl(f)));
+      setImages((prev) => {
+        const next = [...prev, ...processed].slice(0, 10);
+        return next;
+      });
+    } catch (err) {
+      console.warn('Image processing notice:', err);
+      setError(err instanceof Error ? err.message : 'Error processing selected images.');
+    } finally {
+      setIsProcessingImages(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
 
-      const img = new Image();
-      img.onload = () => {
-        const optimized = compressImage(img, rawDataUrl);
-        setImageDataUrl(optimized);
-      };
-      img.onerror = () => {
-        setImageDataUrl(rawDataUrl);
-      };
-      img.src = rawDataUrl;
-    };
-    reader.onerror = () => {
-      setError('Failed to read image file from your device.');
-    };
-    reader.readAsDataURL(file);
+  // Handle adding image via URL
+  const handleAddImageUrl = () => {
+    setError('');
+    const trimmed = imageUrlInput.trim();
+    if (!trimmed) {
+      setError('Please enter a valid image URL.');
+      return;
+    }
+    let url = trimmed;
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      url = 'https://' + url;
+    }
+    if (images.length >= 10) {
+      setError('Maximum 10 images allowed per product.');
+      return;
+    }
+    setImages((prev) => [...prev, url]);
+    setImageUrlInput('');
+  };
+
+  // Make an image the primary cover (move to index 0)
+  const handleSetCover = (index: number) => {
+    if (index === 0) return;
+    setImages((prev) => {
+      const copy = [...prev];
+      const [item] = copy.splice(index, 1);
+      copy.unshift(item);
+      return copy;
+    });
+    setActivePreviewIdx(0);
+  };
+
+  // Remove an image from the list
+  const handleRemoveImage = (index: number) => {
+    setImages((prev) => {
+      const next = prev.filter((_, i) => i !== index);
+      return next;
+    });
+    if (activePreviewIdx >= index && activePreviewIdx > 0) {
+      setActivePreviewIdx((prev) => prev - 1);
+    }
   };
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -187,8 +271,8 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      handleFileSelect(e.dataTransfer.files[0]);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      handleFilesSelect(e.dataTransfer.files);
     }
   };
 
@@ -209,14 +293,8 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       return;
     }
 
-    // Determine final image URL
-    const activeImage = imageMode === 'url' ? imageUrlInput.trim() : imageDataUrl;
-    if (!activeImage) {
-      setError(
-        imageMode === 'url'
-          ? 'Please enter an image URL or switch to uploading a photo from your device.'
-          : 'Please select a product photo from your device or paste an image URL.'
-      );
+    if (images.length === 0) {
+      setError('Please add at least one product photo.');
       return;
     }
 
@@ -249,7 +327,8 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         description: editorialNote.trim() || `Curated recommendation by ${user.name || 'Curator'}`,
         editorialNote: editorialNote.trim() || undefined,
         category,
-        imageUrl: activeImage,
+        imageUrl: images[0],
+        images: images,
         affiliateUrl: formattedUrl,
         store,
         price: trimmedPrice,
@@ -275,9 +354,9 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       setAffiliateUrl('');
       setOriginalPrice('');
       setEditorialNote('');
-      setImageDataUrl('');
+      setImages([]);
       setImageUrlInput('');
-      setImageFileName('');
+      setActivePreviewIdx(0);
       setTagsInput('');
     } catch (err: unknown) {
       console.error('Upload product caught error:', err);
@@ -320,12 +399,20 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             </div>
           )}
 
-          {/* Product Photography Section */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-700 dark:text-neutral-300">
-                Product Photography *
-              </label>
+          {/* Product Photography Section - Supports Multiple Images */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-700 dark:text-neutral-300">
+                  Product Photography *
+                </label>
+                {images.length > 0 && (
+                  <span className="px-2 py-0.5 rounded-full bg-neutral-100 dark:bg-neutral-800 text-[11px] font-mono text-neutral-600 dark:text-neutral-400">
+                    {images.length} / 10 photos
+                  </span>
+                )}
+              </div>
+
               <div className="flex items-center p-0.5 rounded-lg bg-neutral-100 dark:bg-neutral-800 text-xs">
                 <button
                   type="button"
@@ -352,84 +439,213 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               </div>
             </div>
 
-            {imageMode === 'url' ? (
-              <div className="space-y-3">
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-neutral-400">
-                    <ImageIcon className="w-4 h-4" />
+            {/* If currently processing compressed images */}
+            {isProcessingImages && (
+              <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200 text-xs flex items-center gap-3">
+                <Loader2 className="w-4 h-4 animate-spin text-amber-600 dark:text-amber-400" />
+                <span>Optimizing and compressing photos for fast loading...</span>
+              </div>
+            )}
+
+            {/* If no images uploaded yet */}
+            {images.length === 0 ? (
+              imageMode === 'url' ? (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <div className="relative flex-1">
+                      <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-neutral-400">
+                        <ImageIcon className="w-4 h-4" />
+                      </div>
+                      <input
+                        id="product-image-url-input"
+                        type="url"
+                        value={imageUrlInput}
+                        onChange={(e) => setImageUrlInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleAddImageUrl();
+                          }
+                        }}
+                        placeholder="https://images.unsplash.com/... or merchant photo URL"
+                        className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-neutral-200 dark:border-neutral-700 bg-neutral-50/50 dark:bg-neutral-900/60 text-sm focus:outline-none focus:border-[#FF6E40] dark:focus:border-[#FF6E40] transition-colors"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleAddImageUrl}
+                      className="px-4 py-2.5 rounded-xl bg-neutral-900 hover:bg-black dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-950 text-xs font-semibold cursor-pointer shadow transition-all"
+                    >
+                      Add Photo
+                    </button>
                   </div>
+                  <p className="text-[11px] text-neutral-400">
+                    Paste image address from Amazon, Flipkart, or your cloud storage.
+                  </p>
+                </div>
+              ) : (
+                <div
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  onClick={() => fileInputRef.current?.click()}
+                  className={`border-2 border-dashed rounded-2xl p-7 text-center cursor-pointer transition-all ${
+                    isDragging
+                      ? 'border-[#FF6E40] bg-orange-50/50 dark:bg-orange-950/20'
+                      : 'border-neutral-300 dark:border-neutral-700 hover:border-neutral-400 dark:hover:border-neutral-600 bg-neutral-50/50 dark:bg-neutral-900/40'
+                  }`}
+                >
+                  <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-neutral-100 dark:bg-neutral-800 flex items-center justify-center text-neutral-500 dark:text-neutral-400">
+                    <Upload className="w-5 h-5" />
+                  </div>
+                  <p className="text-sm font-medium text-neutral-800 dark:text-neutral-200">
+                    Select photos from your device (multi-select enabled)
+                  </p>
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
+                    Upload multiple angles, packaging, or product details (up to 10 photos)
+                  </p>
+                </div>
+              )
+            ) : (
+              /* When 1 or more images are added */
+              <div className="space-y-3">
+                {/* Active Photo Large Preview Box */}
+                <div className="relative rounded-2xl overflow-hidden border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 h-56 sm:h-64 flex items-center justify-center group">
+                  <img
+                    src={images[activePreviewIdx] || images[0]}
+                    alt={`Preview photo ${activePreviewIdx + 1}`}
+                    className="max-h-full max-w-full object-contain p-4 transition-all"
+                  />
+
+                  {/* Primary Cover Badge */}
+                  <div className="absolute top-3 left-3 z-10">
+                    {activePreviewIdx === 0 ? (
+                      <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#FF6E40] text-white text-[11px] font-bold shadow-md">
+                        <Star className="w-3 h-3 fill-white" />
+                        <span>Primary Cover Photo</span>
+                      </div>
+                    ) : (
+                      <div className="px-2.5 py-1 rounded-full bg-black/60 backdrop-blur-md text-white text-[11px] font-medium shadow-sm">
+                        Photo {activePreviewIdx + 1} of {images.length}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Action overlay buttons */}
+                  <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
+                    {activePreviewIdx !== 0 && (
+                      <button
+                        type="button"
+                        onClick={() => handleSetCover(activePreviewIdx)}
+                        title="Set this photo as primary cover"
+                        className="px-2.5 py-1.5 rounded-lg bg-white/95 dark:bg-neutral-800/95 hover:bg-white text-neutral-800 dark:text-neutral-200 text-xs font-semibold flex items-center gap-1.5 shadow-sm cursor-pointer border border-neutral-200 dark:border-neutral-700"
+                      >
+                        <Star className="w-3 h-3 text-[#FF6E40]" />
+                        <span>Make Cover</span>
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveImage(activePreviewIdx)}
+                      title="Delete this photo"
+                      className="p-1.5 rounded-lg bg-red-600/90 hover:bg-red-600 text-white text-xs cursor-pointer shadow-sm"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Multiple Images Thumbnail Strip with "Add More" Button */}
+                <div className="flex items-center gap-2.5 overflow-x-auto pb-2 pt-1 scrollbar-thin">
+                  {images.map((imgUrl, idx) => (
+                    <div
+                      key={`thumb-${idx}`}
+                      className={`relative group flex-shrink-0 w-16 h-16 rounded-xl overflow-hidden border-2 cursor-pointer transition-all bg-neutral-100 dark:bg-neutral-900 ${
+                        activePreviewIdx === idx
+                          ? 'border-[#FF6E40] shadow-md ring-1 ring-[#FF6E40]'
+                          : 'border-neutral-200 dark:border-neutral-800 opacity-75 hover:opacity-100'
+                      }`}
+                      onClick={() => setActivePreviewIdx(idx)}
+                    >
+                      <img
+                        src={imgUrl}
+                        alt={`Photo ${idx + 1}`}
+                        className="w-full h-full object-cover"
+                      />
+
+                      {idx === 0 && (
+                        <span className="absolute bottom-0 inset-x-0 bg-[#FF6E40] text-[9px] text-white text-center font-bold py-0.5 leading-none">
+                          Cover
+                        </span>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleRemoveImage(idx);
+                        }}
+                        title="Remove photo"
+                        className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/70 hover:bg-red-600 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+
+                  {/* Add More Photos Tile if under limit */}
+                  {images.length < 10 && (
+                    <button
+                      type="button"
+                      id="upload-add-more-photos-btn"
+                      onClick={() => {
+                        if (imageMode === 'url') {
+                          // keep focus on url field
+                        } else {
+                          fileInputRef.current?.click();
+                        }
+                      }}
+                      className="flex-shrink-0 w-16 h-16 rounded-xl border-2 border-dashed border-neutral-300 dark:border-neutral-700 hover:border-[#FF6E40] dark:hover:border-[#FF6E40] text-neutral-500 hover:text-[#FF6E40] flex flex-col items-center justify-center gap-1 transition-colors cursor-pointer bg-neutral-50/50 dark:bg-neutral-900/40"
+                      title="Add more photos"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span className="text-[10px] font-medium">Add (+)</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* Additional URL image appender for quick web photo adding */}
+                <div className="pt-1 flex items-center gap-2">
                   <input
-                    id="product-image-url-input"
                     type="url"
                     value={imageUrlInput}
                     onChange={(e) => setImageUrlInput(e.target.value)}
-                    placeholder="https://images.unsplash.com/... or merchant photo URL"
-                    className="w-full pl-10 pr-4 py-3 rounded-xl border border-neutral-200 dark:border-neutral-700 bg-neutral-50/50 dark:bg-neutral-900/60 text-sm focus:outline-none focus:border-amber-500 dark:focus:border-amber-500 transition-colors"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleAddImageUrl();
+                      }
+                    }}
+                    placeholder="Or paste another image URL to add..."
+                    className="flex-1 px-3 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-neutral-50/50 dark:bg-neutral-900/60 text-xs focus:outline-none focus:border-[#FF6E40]"
                   />
-                </div>
-                {imageUrlInput && (
-                  <div className="relative rounded-2xl overflow-hidden border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-900 h-48 flex items-center justify-center p-2">
-                    <img
-                      src={imageUrlInput}
-                      alt="URL preview"
-                      className="max-h-full max-w-full object-contain rounded-xl"
-                      onError={() => setError('Image URL could not be loaded. Please verify the link.')}
-                    />
-                  </div>
-                )}
-              </div>
-            ) : imageDataUrl ? (
-              <div className="relative rounded-2xl overflow-hidden border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-900 group">
-                <img
-                  src={imageDataUrl}
-                  alt="Uploaded product preview"
-                  className="w-full h-56 object-contain p-4"
-                />
-                <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
+                  <button
+                    type="button"
+                    onClick={handleAddImageUrl}
+                    className="px-3 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-700 dark:text-neutral-200 text-xs font-medium cursor-pointer transition-colors"
+                  >
+                    + Add URL
+                  </button>
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    className="px-3 py-1.5 rounded-lg bg-white text-black text-xs font-medium cursor-pointer shadow hover:bg-neutral-100"
+                    className="px-3 py-1.5 rounded-lg bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-700 dark:text-neutral-200 text-xs font-medium flex items-center gap-1 cursor-pointer transition-colors"
                   >
-                    Change Photo
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setImageDataUrl('');
-                      setImageFileName('');
-                    }}
-                    className="px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-medium cursor-pointer shadow hover:bg-red-700"
-                  >
-                    Remove
+                    <Upload className="w-3 h-3" />
+                    <span>Upload Device</span>
                   </button>
                 </div>
-                <div className="px-4 py-2 bg-neutral-100 dark:bg-neutral-800 text-[11px] text-neutral-500 truncate flex items-center gap-2">
-                  <Check className="w-3.5 h-3.5 text-emerald-500" />
-                  <span>{imageFileName || 'Photo processed & ready for magazine feature'}</span>
-                </div>
-              </div>
-            ) : (
-              <div
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                onDrop={handleDrop}
-                onClick={() => fileInputRef.current?.click()}
-                className={`border-2 border-dashed rounded-2xl p-7 text-center cursor-pointer transition-all ${
-                  isDragging
-                    ? 'border-amber-500 bg-amber-50/50 dark:bg-amber-950/20'
-                    : 'border-neutral-300 dark:border-neutral-700 hover:border-neutral-400 dark:hover:border-neutral-600 bg-neutral-50/50 dark:bg-neutral-900/40'
-                }`}
-              >
-                <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-neutral-100 dark:bg-neutral-800 flex items-center justify-center text-neutral-500 dark:text-neutral-400">
-                  <Upload className="w-5 h-5" />
-                </div>
-                <p className="text-sm font-medium text-neutral-800 dark:text-neutral-200">
-                  Click to select photo or drag & drop
-                </p>
-                <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
-                  PNG, JPG, or WebP (auto-optimized for instant mobile loading)
-                </p>
               </div>
             )}
 
@@ -438,10 +654,11 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               id="product-file-upload-input"
               type="file"
               accept="image/*"
+              multiple
               className="hidden"
               onChange={(e) => {
-                if (e.target.files && e.target.files[0]) {
-                  handleFileSelect(e.target.files[0]);
+                if (e.target.files && e.target.files.length > 0) {
+                  handleFilesSelect(e.target.files);
                 }
               }}
             />

@@ -34,7 +34,6 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   const [affiliateUrl, setAffiliateUrl] = useState('');
   const [store, setStore] = useState<StoreType>('Amazon');
   const [category, setCategory] = useState<CategoryType>('Tech & Audio');
-  const [price, setPrice] = useState('');
   const [originalPrice, setOriginalPrice] = useState('');
   const [editorialNote, setEditorialNote] = useState('');
   const [tagsInput, setTagsInput] = useState('');
@@ -58,7 +57,34 @@ export const UploadModal: React.FC<UploadModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Auto-detect store from affiliate URL
+  // Helper to extract price from URL parameters, product titles, or pasted strings
+  const extractPriceFromText = (input: string): string | null => {
+    if (!input) return null;
+    try {
+      const decoded = decodeURIComponent(input);
+      // Check for Rupee / Rs formats
+      const inrMatch = decoded.match(/(?:₹|rs\.?|inr)\s*([0-9]{1,3}(?:,[0-9]{2,3})*(?:\.[0-9]{2})?|[0-9]{2,7})/i);
+      if (inrMatch && inrMatch[1]) {
+        return `₹${inrMatch[1].trim()}`;
+      }
+      // Check for Dollar formats
+      const usdMatch = decoded.match(/(?:\$|usd)\s*([0-9]{1,3}(?:,[0-9]{2,3})*(?:\.[0-9]{2})?|[0-9]{2,7})/i);
+      if (usdMatch && usdMatch[1]) {
+        return `$${usdMatch[1].trim()}`;
+      }
+      // Check for Euro / Pound formats
+      const eurMatch = decoded.match(/(?:€|£|eur|gbp)\s*([0-9]{1,3}(?:,[0-9]{2,3})*(?:\.[0-9]{2})?|[0-9]{2,7})/i);
+      if (eurMatch && eurMatch[1]) {
+        const symbol = decoded.includes('£') ? '£' : '€';
+        return `${symbol}${eurMatch[1].trim()}`;
+      }
+    } catch {
+      // Ignore decoding issues
+    }
+    return null;
+  };
+
+  // Auto-detect store and price from affiliate URL
   const handleUrlChange = (val: string) => {
     setAffiliateUrl(val);
     const lower = val.toLowerCase();
@@ -68,6 +94,13 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       setStore('Flipkart');
     } else if (lower.includes('myntra')) {
       setStore('Myntra');
+    }
+
+    if (!originalPrice.trim()) {
+      const detected = extractPriceFromText(val);
+      if (detected) {
+        setOriginalPrice(detected);
+      }
     }
   };
 
@@ -187,8 +220,8 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       return;
     }
 
-    if (!price.trim()) {
-      setError('Please state the product price.');
+    if (!originalPrice.trim()) {
+      setError('Please provide the original price.');
       return;
     }
 
@@ -197,14 +230,6 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     setSubmitting(true);
 
     try {
-      // Calculate discount percentage if original price exists
-      let discount: number | undefined = undefined;
-      const numPrice = parseFloat(price.replace(/[^0-9.]/g, ''));
-      const numOrig = parseFloat(originalPrice.replace(/[^0-9.]/g, ''));
-      if (numPrice && numOrig && numOrig > numPrice) {
-        discount = Math.round(((numOrig - numPrice) / numOrig) * 100);
-      }
-
       // Format affiliate URL safely
       let formattedUrl = affiliateUrl.trim();
       if (!formattedUrl.startsWith('http://') && !formattedUrl.startsWith('https://')) {
@@ -216,6 +241,8 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         .map((t) => t.trim().toLowerCase())
         .filter(Boolean);
 
+      const trimmedPrice = originalPrice.trim();
+
       const newProduct: Product = {
         id: 'prod_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
         title: title.trim(),
@@ -225,9 +252,8 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         imageUrl: activeImage,
         affiliateUrl: formattedUrl,
         store,
-        price: price.trim(),
-        originalPrice: originalPrice.trim() || undefined,
-        discountPercent: discount,
+        price: trimmedPrice,
+        originalPrice: trimmedPrice,
         tags: tags.length > 0 ? tags : [category.toLowerCase(), store.toLowerCase()],
         uploaderId: user.id || 'usr_' + Date.now(),
         uploaderName: user.name || 'Curator',
@@ -247,7 +273,6 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       // Reset fields
       setTitle('');
       setAffiliateUrl('');
-      setPrice('');
       setOriginalPrice('');
       setEditorialNote('');
       setImageDataUrl('');
@@ -431,7 +456,16 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               id="product-title-input"
               type="text"
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              onChange={(e) => {
+                const val = e.target.value;
+                setTitle(val);
+                if (!originalPrice.trim()) {
+                  const detected = extractPriceFromText(val);
+                  if (detected) {
+                    setOriginalPrice(detected);
+                  }
+                }
+              }}
               placeholder="e.g., Sony WH-1000XM5 Wireless Headphones"
               className="w-full px-4 py-3 rounded-xl border border-neutral-200 dark:border-neutral-700 bg-neutral-50/50 dark:bg-neutral-900/60 text-sm focus:outline-none focus:border-amber-500 dark:focus:border-amber-500 transition-colors"
               required
@@ -479,8 +513,8 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             </div>
           </div>
 
-          {/* Category & Pricing */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {/* Category & Pricing: single Original Price section to be filled */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-700 dark:text-neutral-300 mb-2">
                 Magazine Category
@@ -500,31 +534,20 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             </div>
 
             <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-700 dark:text-neutral-300 mb-2">
-                Deal / Offer Price *
-              </label>
-              <input
-                id="product-price-input"
-                type="text"
-                value={price}
-                onChange={(e) => setPrice(e.target.value)}
-                placeholder="₹2,499 or $99"
-                className="w-full px-4 py-3 rounded-xl border border-neutral-200 dark:border-neutral-700 bg-neutral-50/50 dark:bg-neutral-900/60 text-sm focus:outline-none focus:border-amber-500 dark:focus:border-amber-500 transition-colors"
-                required
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-700 dark:text-neutral-300 mb-2">
-                Original Price (opt)
-              </label>
+              <div className="flex items-center justify-between mb-2">
+                <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-700 dark:text-neutral-300">
+                  Original Price *
+                </label>
+                <span className="text-[11px] text-neutral-400">Auto-detected or enter manually</span>
+              </div>
               <input
                 id="product-orig-price-input"
                 type="text"
                 value={originalPrice}
                 onChange={(e) => setOriginalPrice(e.target.value)}
-                placeholder="₹3,999 or $149"
+                placeholder="₹2,499 or $99"
                 className="w-full px-4 py-3 rounded-xl border border-neutral-200 dark:border-neutral-700 bg-neutral-50/50 dark:bg-neutral-900/60 text-sm focus:outline-none focus:border-amber-500 dark:focus:border-amber-500 transition-colors"
+                required
               />
             </div>
           </div>

@@ -160,7 +160,7 @@ const MagazineProductCard: React.FC<{
               <span className="text-xl font-bold font-sans text-neutral-900 dark:text-white">
                 {product.price}
               </span>
-              {product.originalPrice && (
+              {product.originalPrice && product.originalPrice !== product.price && (
                 <span className="text-xs text-neutral-400 line-through">
                   {product.originalPrice}
                 </span>
@@ -845,11 +845,12 @@ export const MagazineView: React.FC<MagazineViewProps> = ({
                   <span className="text-2xl font-bold font-sans">
                     {selectedProductForModal.price}
                   </span>
-                  {selectedProductForModal.originalPrice && (
-                    <span className="text-xs text-neutral-400 line-through ml-2">
-                      {selectedProductForModal.originalPrice}
-                    </span>
-                  )}
+                  {selectedProductForModal.originalPrice &&
+                    selectedProductForModal.originalPrice !== selectedProductForModal.price && (
+                      <span className="text-xs text-neutral-400 line-through ml-2">
+                        {selectedProductForModal.originalPrice}
+                      </span>
+                    )}
                 </div>
                 <div className="flex items-center gap-3">
                   <button

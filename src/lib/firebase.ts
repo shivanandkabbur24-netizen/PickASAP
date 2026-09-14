@@ -24,17 +24,18 @@ import {
 } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { Product, ClickRecord, UserProfile } from '../types';
+import initialProductsRaw from '../data/initialProducts.json';
+
+// Baseline products guaranteed to show up on the home screen immediately on frame zero
+const INITIAL_PRODUCTS: Product[] = initialProductsRaw as Product[];
 
 // Initialize Firebase App
 const app = initializeApp(firebaseConfig);
 
 // Initialize Cloud Firestore with databaseId as prescribed by Firebase Integration Skill
-// and enable long-polling to prevent WebSocket/streaming drops in sandboxed iframe environments
 export const db = initializeFirestore(
   app,
-  {
-    experimentalForceLongPolling: true,
-  },
+  {},
   firebaseConfig.firestoreDatabaseId
 );
 
@@ -104,14 +105,24 @@ const STORAGE_FAVORITES = 'pickasap_favorites_v1';
 export const getStoredProducts = (): Product[] => {
   try {
     const raw = localStorage.getItem(STORAGE_PRODUCTS);
-    if (!raw) return [];
-    const list = JSON.parse(raw);
-    if (!Array.isArray(list)) return [];
-    // Strict deduplication by product id and combination of affiliateUrl + title
+    let list: Product[] = [];
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          list = parsed;
+        }
+      } catch (e) {
+        console.warn('Storage parse warning:', e);
+      }
+    }
+
+    // Combine local storage with INITIAL_PRODUCTS baseline so all uploaded items are immediately accessible
+    const combined = [...list, ...INITIAL_PRODUCTS];
     const seenIds = new Set<string>();
     const seenCombos = new Set<string>();
     const deduped: Product[] = [];
-    for (const item of list) {
+    for (const item of combined) {
       if (!item || !item.id) continue;
       const comboKey = `${(item.affiliateUrl || '').trim()}::${(item.title || '').trim().toLowerCase()}`;
       if (seenIds.has(item.id) || (item.affiliateUrl && seenCombos.has(comboKey))) {
@@ -121,9 +132,11 @@ export const getStoredProducts = (): Product[] => {
       if (item.affiliateUrl) seenCombos.add(comboKey);
       deduped.push(item);
     }
+    // Sort newest first
+    deduped.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
     return deduped;
   } catch {
-    return [];
+    return INITIAL_PRODUCTS;
   }
 };
 
@@ -186,15 +199,18 @@ export const databaseService = {
     const cached = getStoredProducts();
     const path = 'products';
     try {
-      const q = query(collection(db, path), orderBy('createdAt', 'desc'));
-      const snapshot = await getDocs(q);
+      const snapshot = await getDocs(collection(db, path));
       const items: Product[] = [];
       snapshot.forEach((docSnap) => {
-        items.push(docSnap.data() as Product);
+        const data = docSnap.data() as Product;
+        if (data && data.id && data.title) {
+          items.push(data);
+        }
       });
       if (items.length > 0) {
+        items.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
         setStoredProducts(items);
-        return items;
+        return getStoredProducts();
       }
       return cached;
     } catch (error) {
@@ -327,18 +343,19 @@ export const databaseService = {
 
     const path = 'products';
     return onSnapshot(
-      query(collection(db, path), orderBy('createdAt', 'desc')),
+      collection(db, path),
       (snapshot) => {
         const items: Product[] = [];
         snapshot.forEach((docSnap) => {
-          items.push(docSnap.data() as Product);
+          const data = docSnap.data() as Product;
+          if (data && data.id && data.title) {
+            items.push(data);
+          }
         });
         if (items.length > 0) {
+          items.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
           setStoredProducts(items);
           onData(getStoredProducts());
-        } else if (!snapshot.metadata.fromCache) {
-          // If server confirmed no documents exist
-          onData([]);
         }
       },
       (error) => {

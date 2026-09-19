@@ -14,7 +14,8 @@ import {
   Layers,
 } from 'lucide-react';
 import { Product, UserProfile, CategoryType, StoreType } from '../types';
-import { database as db } from '../lib/firebase';
+import { database as db, parsePriceToNumber } from '../lib/firebase';
+import { fetchBackgroundPriceHistory } from '../lib/priceIntelligence';
 
 interface UploadModalProps {
   user: UserProfile;
@@ -320,6 +321,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         .filter(Boolean);
 
       const trimmedPrice = originalPrice.trim();
+      const numPrice = parsePriceToNumber(trimmedPrice);
 
       const newProduct: Product = {
         id: 'prod_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
@@ -333,6 +335,10 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         store,
         price: trimmedPrice,
         originalPrice: trimmedPrice,
+        currentPrice: numPrice > 0 ? numPrice : undefined,
+        mrp: trimmedPrice,
+        dealStatus: 'verified',
+        lastUpdated: new Date().toISOString(),
         tags: tags.length > 0 ? tags : [category.toLowerCase(), store.toLowerCase()],
         uploaderId: user.id || 'usr_' + Date.now(),
         uploaderName: user.name || 'Curator',
@@ -346,7 +352,12 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       // 2. Persist to storage & cloud
       await db.addProduct(newProduct);
 
-      // 3. Immediately close modal
+      // 3. Kick off automatic background price intelligence fetch for this product
+      fetchBackgroundPriceHistory(newProduct).catch((fetchErr) => {
+        console.warn('Background price history prefetch notice:', fetchErr);
+      });
+
+      // 4. Immediately close modal
       onClose();
 
       // Reset fields

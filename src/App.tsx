@@ -9,9 +9,19 @@ import { MagazineView } from './components/MagazineView';
 import { DashboardView } from './components/DashboardView';
 import { LoginPage } from './components/LoginPage';
 import { UploadModal } from './components/UploadModal';
-import { Product, UserProfile, StoreType, SortOption, CategoryType } from './types';
+import { AdminPriceUpdateModal } from './components/AdminPriceUpdateModal';
+import { PlatformFeeModal } from './components/PlatformFeeModal';
+import { ProductDetailPage } from './components/ProductDetailPage';
+import { AffiliatePartnerProfile } from './components/AffiliatePartnerProfile';
+import { Product, UserProfile, StoreType, SortOption, CategoryType, ClickRecord } from './types';
 import { database as db } from './lib/firebase';
-import { ShoppingBag, ShieldCheck, Sparkles, Tag, ExternalLink } from 'lucide-react';
+import {
+  getCurrentMonthKey,
+  getMonthlyClicksForUser,
+  getRevenueTier,
+  isPlatformFeePaidForMonth,
+} from './lib/revenueModel';
+import { ShoppingBag, ShieldCheck, Sparkles, Tag, ExternalLink, TrendingUp } from 'lucide-react';
 
 export default function App() {
   // State management
@@ -21,7 +31,33 @@ export default function App() {
   const [products, setProducts] = useState<Product[]>(() => db.getStoredProducts());
   const [isProductsLoading, setIsProductsLoading] = useState<boolean>(() => db.getStoredProducts().length === 0);
   const [favorites, setFavorites] = useState<string[]>(() => db.getFavorites());
+  const [clicks, setClicks] = useState<ClickRecord[]>(() => db.getStoredClicks());
   const [isUploadOpen, setIsUploadOpen] = useState(false);
+  const [isPlatformFeeOpen, setIsPlatformFeeOpen] = useState(false);
+  const [isPriceUpdateOpen, setIsPriceUpdateOpen] = useState(false);
+  const [priceUpdateProduct, setPriceUpdateProduct] = useState<Product | null>(null);
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const prodId = params.get('product');
+      if (prodId) {
+        const stored = db.getStoredProducts();
+        return stored.find((p) => p.id === prodId) || null;
+      }
+    }
+    return null;
+  });
+  const [selectedPartner, setSelectedPartner] = useState<{ id: string; name: string } | null>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const partnerId = params.get('partner');
+      const partnerName = params.get('partnerName');
+      if (partnerId || partnerName) {
+        return { id: partnerId || '', name: partnerName || 'Affiliate Partner' };
+      }
+    }
+    return null;
+  });
   const [darkMode, setDarkMode] = useState<boolean>(() => {
     try {
       return localStorage.getItem('pickasap_theme') === 'dark';
@@ -53,6 +89,11 @@ export default function App() {
     const unsubscribeProducts = db.subscribeToProducts((liveProducts) => {
       setProducts(liveProducts);
       setIsProductsLoading(false);
+    });
+
+    // Subscribe to authentic outbound click stream
+    const unsubscribeClicks = db.subscribeToClicks((liveClicks) => {
+      setClicks(liveClicks);
     });
 
     // 2. Fast parallel check in case onSnapshot needs an immediate resolution
@@ -88,15 +129,30 @@ export default function App() {
       setFavorites(e.detail);
     };
 
+    // Listen to product price & deal updates
+    const handleProductUpdated = (e: CustomEvent<Product>) => {
+      if (e.detail?.id) {
+        setProducts((prev) =>
+          prev.map((p) => (p.id === e.detail.id ? { ...p, ...e.detail } : p))
+        );
+        setSelectedProduct((prev) =>
+          prev && prev.id === e.detail.id ? { ...prev, ...e.detail } : prev
+        );
+      }
+    };
+
     window.addEventListener('pickasap:click_recorded', handleRealtimeClick as EventListener);
     window.addEventListener('pickasap:auth_changed', handleAuthChange as EventListener);
     window.addEventListener('pickasap:favorites_changed', handleFavChange as EventListener);
+    window.addEventListener('pickasap:product_updated', handleProductUpdated as EventListener);
 
     return () => {
       unsubscribeProducts();
+      unsubscribeClicks();
       window.removeEventListener('pickasap:click_recorded', handleRealtimeClick as EventListener);
       window.removeEventListener('pickasap:auth_changed', handleAuthChange as EventListener);
       window.removeEventListener('pickasap:favorites_changed', handleFavChange as EventListener);
+      window.removeEventListener('pickasap:product_updated', handleProductUpdated as EventListener);
     };
   }, []);
 
@@ -140,12 +196,114 @@ export default function App() {
     setFavorites(updated);
   };
 
+  const handleAttemptUpload = () => {
+    if (!user) {
+      setCurrentView('login');
+      return;
+    }
+    const currentMonthKey = getCurrentMonthKey();
+    const userProducts = products.filter(
+      (p) => p.uploaderId === user.id || user.role === 'admin' || !p.uploaderId
+    );
+    const monthClicks = getMonthlyClicksForUser(
+      userProducts,
+      clicks,
+      currentMonthKey
+    );
+    const tier = getRevenueTier(monthClicks);
+    const feePaid = isPlatformFeePaidForMonth(user, currentMonthKey);
+
+    if (tier.platformFee > 0 && !feePaid) {
+      setIsPlatformFeeOpen(true);
+    } else {
+      setIsUploadOpen(true);
+    }
+  };
+
+  // Dedicated Product Page selection & URL routing (?product=<id>)
+  const handleSelectProduct = (product: Product | null) => {
+    setSelectedProduct(product);
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      if (product) {
+        url.searchParams.set('product', product.id);
+      } else {
+        url.searchParams.delete('product');
+      }
+      window.history.pushState({}, '', url.toString());
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // Dedicated Affiliate Partner Profile selection & URL routing (?partner=<id>&partnerName=<name>)
+  const handleSelectPartner = (partner: { id: string; name: string } | null) => {
+    setSelectedPartner(partner);
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      if (partner) {
+        if (partner.id) url.searchParams.set('partner', partner.id);
+        if (partner.name) url.searchParams.set('partnerName', partner.name);
+        url.searchParams.delete('product');
+      } else {
+        url.searchParams.delete('partner');
+        url.searchParams.delete('partnerName');
+      }
+      window.history.pushState({}, '', url.toString());
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // Popstate listener to handle browser Back / Forward buttons
+  useEffect(() => {
+    const handlePopState = () => {
+      const params = new URLSearchParams(window.location.search);
+      const prodId = params.get('product');
+      if (prodId) {
+        const found = products.find((p) => p.id === prodId);
+        if (found) {
+          setSelectedProduct(found);
+          return;
+        }
+      }
+      setSelectedProduct(null);
+
+      const partnerId = params.get('partner');
+      const partnerName = params.get('partnerName');
+      if (partnerId || partnerName) {
+        setSelectedPartner({ id: partnerId || '', name: partnerName || 'Affiliate Partner' });
+      } else {
+        setSelectedPartner(null);
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [products]);
+
+  // Keep selected product in sync with realtime edits or price changes
+  useEffect(() => {
+    if (selectedProduct) {
+      const fresh = products.find((p) => p.id === selectedProduct.id);
+      if (fresh && fresh !== selectedProduct) {
+        setSelectedProduct(fresh);
+      }
+    }
+  }, [products]);
+
+  const handleAffiliateClick = (e: React.MouseEvent, product: Product) => {
+    db.recordClick(product);
+  };
+
   // If viewing the login page (matching the full screen dark mockup from Image 2)
   if (currentView === 'login') {
     return (
       <LoginPage
         onSuccess={handleAuthSuccess}
-        onCancel={() => setCurrentView('magazine')}
+        onCancel={() => {
+          setCurrentView('magazine');
+          handleSelectProduct(null);
+          handleSelectPartner(null);
+        }}
       />
     );
   }
@@ -155,16 +313,14 @@ export default function App() {
       {/* Sticky Top Navbar */}
       <Navbar
         currentView={currentView}
-        setCurrentView={setCurrentView}
+        setCurrentView={(view) => {
+          setCurrentView(view);
+          handleSelectProduct(null);
+          handleSelectPartner(null);
+        }}
         user={user}
         onLogout={handleLogout}
-        onOpenUploadModal={() => {
-          if (!user) {
-            setCurrentView('login');
-          } else {
-            setIsUploadOpen(true);
-          }
-        }}
+        onOpenUploadModal={handleAttemptUpload}
         darkMode={darkMode}
         setDarkMode={setDarkMode}
         favoritesCount={favorites.length}
@@ -172,13 +328,66 @@ export default function App() {
 
       {/* Main View Area */}
       <div className="flex-1">
-        {currentView === 'dashboard' && user ? (
+        {selectedProduct ? (
+          <ProductDetailPage
+            product={selectedProduct}
+            onBack={() => handleSelectProduct(null)}
+            isFav={favorites.includes(selectedProduct.id)}
+            onToggleFavorite={handleToggleFavorite}
+            onOpenShare={(prod) => {
+              if (navigator.share) {
+                navigator
+                  .share({
+                    title: prod.title,
+                    text: `Check out ${prod.title} on PickASAP: ${prod.price}`,
+                    url: prod.affiliateUrl,
+                  })
+                  .catch(() => {});
+              } else if (navigator.clipboard) {
+                navigator.clipboard.writeText(prod.affiliateUrl);
+              }
+            }}
+            onAffiliateClick={handleAffiliateClick}
+            isAdmin={user?.role === 'admin'}
+            currentUser={user}
+            onOpenPriceUpdate={(product) => {
+              setPriceUpdateProduct(product);
+              setIsPriceUpdateOpen(true);
+            }}
+            allProducts={products}
+            onSelectRelatedProduct={(rel) => handleSelectProduct(rel)}
+            onSelectPartner={(partner) => {
+              handleSelectProduct(null);
+              handleSelectPartner(partner);
+            }}
+          />
+        ) : selectedPartner ? (
+          <AffiliatePartnerProfile
+            partner={selectedPartner}
+            products={products}
+            onBack={() => handleSelectPartner(null)}
+            onSelectProduct={handleSelectProduct}
+            favorites={favorites}
+            onToggleFavorite={handleToggleFavorite}
+            onAffiliateClick={handleAffiliateClick}
+          />
+        ) : currentView === 'dashboard' && user ? (
           <DashboardView
             user={user}
             products={products}
             onOpenUploadModal={() => setIsUploadOpen(true)}
             onDeleteProduct={handleDeleteProduct}
-            onSwitchToMagazine={() => setCurrentView('magazine')}
+            onSwitchToMagazine={() => {
+              setCurrentView('magazine');
+              handleSelectProduct(null);
+              handleSelectPartner(null);
+            }}
+            onProductUpdated={(updated) => {
+              setProducts((prev) =>
+                prev.map((p) => (p.id === updated.id ? { ...p, ...updated } : p))
+              );
+            }}
+            onSelectProduct={handleSelectProduct}
           />
         ) : (
           <MagazineView
@@ -186,14 +395,15 @@ export default function App() {
             favorites={favorites}
             isLoading={isProductsLoading}
             onToggleFavorite={handleToggleFavorite}
-            onOpenUpload={() => {
-              if (!user) {
-                setCurrentView('login');
-              } else {
-                setIsUploadOpen(true);
-              }
-            }}
+            onOpenUpload={handleAttemptUpload}
             isLoggedIn={Boolean(user)}
+            isAdmin={user?.role === 'admin'}
+            onOpenPriceUpdate={(product) => {
+              setPriceUpdateProduct(product);
+              setIsPriceUpdateOpen(true);
+            }}
+            onSelectProduct={handleSelectProduct}
+            onSelectPartner={handleSelectPartner}
           />
         )}
       </div>
@@ -205,6 +415,51 @@ export default function App() {
           isOpen={isUploadOpen}
           onClose={() => setIsUploadOpen(false)}
           onProductCreated={handleProductCreated}
+        />
+      )}
+
+      {/* Creator Platform Fee Modal */}
+      {user && (
+        <PlatformFeeModal
+          isOpen={isPlatformFeeOpen}
+          onClose={() => setIsPlatformFeeOpen(false)}
+          user={user}
+          monthlyClicks={getMonthlyClicksForUser(
+            products.filter(
+              (p) => p.uploaderId === user.id || user.role === 'admin' || !p.uploaderId
+            ),
+            clicks,
+            getCurrentMonthKey()
+          )}
+          onPaymentSuccess={() => {
+            setIsPlatformFeeOpen(false);
+            const currentMonthKey = getCurrentMonthKey();
+            const updatedUser: UserProfile = {
+              ...user,
+              platformFeePaidMonths: [
+                ...(user.platformFeePaidMonths || []),
+                currentMonthKey,
+              ],
+            };
+            setUser(updatedUser);
+            setIsUploadOpen(true);
+          }}
+        />
+      )}
+
+      {/* Global Admin Price Update Modal (Triggerable from ProductDetailModal or anywhere) */}
+      {user?.role === 'admin' && (
+        <AdminPriceUpdateModal
+          isOpen={isPriceUpdateOpen}
+          onClose={() => setIsPriceUpdateOpen(false)}
+          selectedProduct={priceUpdateProduct}
+          allProducts={products}
+          onProductSelect={(prod) => setPriceUpdateProduct(prod)}
+          onUpdateSuccess={(updatedProd) => {
+            setProducts((prev) =>
+              prev.map((p) => (p.id === updatedProd.id ? { ...p, ...updatedProd } : p))
+            );
+          }}
         />
       )}
 
@@ -299,6 +554,19 @@ export default function App() {
                 Curated Value Discoveries
               </h3>
               <ul className="space-y-2 text-xs">
+                <li>
+                  <button
+                    id="footer-best-deals-link"
+                    onClick={() => {
+                      if (currentView !== 'magazine') setCurrentView('magazine');
+                      window.dispatchEvent(new CustomEvent('pickasap:filter', { detail: { sort: 'best' } }));
+                    }}
+                    className="hover:text-red-600 dark:hover:text-red-400 flex items-center gap-1.5 transition-colors cursor-pointer text-left font-medium"
+                  >
+                    <TrendingUp className="w-3 h-3 text-red-500" />
+                    <span>Best Deals &amp; Top Products</span>
+                  </button>
+                </li>
                 <li>
                   <button
                     id="footer-low-cost-link"

@@ -123,6 +123,11 @@
           "type": "string",
           "description": "ISO timestamp of the event"
         },
+        "uploaderId": {
+          "type": "string",
+          "description": "UID of the creator whose product was clicked",
+          "maxLength": 128
+        },
         "userAgent": {
           "type": "string",
           "description": "Browser user agent for device analytics",
@@ -136,6 +141,212 @@
         "store",
         "timestamp"
       ]
+    },
+    "PriceSnapshot": {
+      "title": "PriceSnapshot",
+      "description": "Historical price observation snapshot for a product",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the snapshot"
+        },
+        "price": {
+          "type": "number",
+          "description": "Observed and verified product price"
+        },
+        "recordedAt": {
+          "type": "string",
+          "description": "ISO timestamp of when this price was recorded"
+        },
+        "source": {
+          "type": "string",
+          "description": "Source of observation (e.g. initial, community_update, admin_verified)",
+          "maxLength": 100
+        },
+        "note": {
+          "type": "string",
+          "description": "Optional commentary or context on deal/price event",
+          "maxLength": 500
+        },
+        "submittedBy": {
+          "type": "string",
+          "description": "User identifier who submitted the approved price update",
+          "maxLength": 128
+        },
+        "approvalMethod": {
+          "type": "string",
+          "description": "Method of approval: automatic, trusted-user, or admin",
+          "enum": ["automatic", "trusted-user", "admin"]
+        },
+        "submissionId": {
+          "type": "string",
+          "description": "Associated price submission identifier",
+          "maxLength": 128
+        }
+      },
+      "required": [
+        "id",
+        "price",
+        "recordedAt",
+        "source"
+      ]
+    },
+    "PriceSubmission": {
+      "title": "PriceSubmission",
+      "description": "User community price update submission with hybrid automated validation and risk scoring",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the submission"
+        },
+        "productId": {
+          "type": "string",
+          "description": "Identifier of the target product",
+          "maxLength": 128
+        },
+        "productTitle": {
+          "type": "string",
+          "description": "Name/title of the product",
+          "maxLength": 250
+        },
+        "submittedBy": {
+          "type": "string",
+          "description": "User ID of the submitter",
+          "maxLength": 128
+        },
+        "submittedByName": {
+          "type": "string",
+          "description": "Display name of the submitter",
+          "maxLength": 100
+        },
+        "submittedByEmail": {
+          "type": "string",
+          "description": "Email address of the submitter",
+          "maxLength": 150
+        },
+        "submittedPrice": {
+          "type": "number",
+          "description": "Proposed new retail price"
+        },
+        "previousApprovedPrice": {
+          "type": "number",
+          "description": "Most recent approved price before this submission"
+        },
+        "priceChangePercentage": {
+          "type": "number",
+          "description": "Calculated percentage difference from previous approved price"
+        },
+        "note": {
+          "type": "string",
+          "description": "Optional submitter note or coupon info",
+          "maxLength": 500
+        },
+        "source": {
+          "type": "string",
+          "description": "Store or reference link source",
+          "maxLength": 500
+        },
+        "status": {
+          "type": "string",
+          "description": "Approval workflow state",
+          "enum": ["pending", "approved", "rejected"]
+        },
+        "approvalMethod": {
+          "type": "string",
+          "description": "Method of approval",
+          "enum": ["automatic", "trusted-user", "admin"]
+        },
+        "riskLevel": {
+          "type": "string",
+          "description": "Calculated risk categorization",
+          "enum": ["low", "medium", "high"]
+        },
+        "submittedAt": {
+          "type": "string",
+          "description": "ISO timestamp of submission creation"
+        },
+        "reviewedAt": {
+          "type": "string",
+          "description": "ISO timestamp of review resolution"
+        },
+        "reviewedBy": {
+          "type": "string",
+          "description": "User ID or system that resolved the submission",
+          "maxLength": 128
+        },
+        "rejectionReason": {
+          "type": "string",
+          "description": "Optional feedback reason if rejected",
+          "maxLength": 500
+        }
+      },
+      "required": [
+        "id",
+        "productId",
+        "submittedBy",
+        "submittedPrice",
+        "previousApprovedPrice",
+        "priceChangePercentage",
+        "status",
+        "approvalMethod",
+        "riskLevel",
+        "submittedAt"
+      ]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User account profile and trusted contributor reputation status",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "User account identifier",
+          "maxLength": 128
+        },
+        "email": {
+          "type": "string",
+          "description": "Account email address",
+          "maxLength": 150
+        },
+        "name": {
+          "type": "string",
+          "description": "User display name",
+          "maxLength": 100
+        },
+        "role": {
+          "type": "string",
+          "description": "Account authorization role",
+          "enum": ["admin", "creator", "user"]
+        },
+        "isTrustedContributor": {
+          "type": "boolean",
+          "description": "Whether user has verified trusted-contributor status"
+        },
+        "approvedSubmissionCount": {
+          "type": "number",
+          "description": "Total successfully approved price updates"
+        },
+        "rejectedSubmissionCount": {
+          "type": "number",
+          "description": "Total rejected price updates"
+        },
+        "trustScore": {
+          "type": "number",
+          "description": "Reputation trust score (0-100)"
+        },
+        "trustedSince": {
+          "type": "string",
+          "description": "ISO timestamp of when trusted status was granted"
+        }
+      },
+      "required": [
+        "id",
+        "email",
+        "name",
+        "role"
+      ]
     }
   },
   "firestore": {
@@ -144,6 +355,24 @@
         "$ref": "#/entities/Product"
       },
       "description": "Public curated affiliate products catalog"
+    },
+    "/products/{productId}/priceHistory/{snapshotId}": {
+      "schema": {
+        "$ref": "#/entities/PriceSnapshot"
+      },
+      "description": "Chronological price history snapshots for a product"
+    },
+    "/priceSubmissions/{submissionId}": {
+      "schema": {
+        "$ref": "#/entities/PriceSubmission"
+      },
+      "description": "Price update submissions queue and history"
+    },
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/UserProfile"
+      },
+      "description": "User profiles with trusted contributor status and reputation metrics"
     },
     "/clicks/{clickId}": {
       "schema": {

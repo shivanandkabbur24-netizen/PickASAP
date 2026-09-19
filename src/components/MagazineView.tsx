@@ -21,8 +21,38 @@ import {
   Layers,
 } from 'lucide-react';
 import { Product, CategoryType, StoreType, SortOption } from '../types';
-import { database as db } from '../lib/firebase';
+import { database as db, formatPriceDisplay, parsePriceToNumber } from '../lib/firebase';
 import { ProductDetailModal } from './ProductDetailModal';
+
+// Calculate effective discount percentage from explicit fields or MRP comparison
+export const getEffectiveDiscount = (product: Product): number => {
+  if (typeof product.discountPercent === 'number' && product.discountPercent > 0) {
+    return product.discountPercent;
+  }
+  if (typeof product.discount === 'number' && product.discount > 0) {
+    return product.discount;
+  }
+  if (typeof product.discountPercentage === 'number' && product.discountPercentage > 0) {
+    return product.discountPercentage;
+  }
+  const original = parsePriceToNumber(product.originalPrice || product.mrp);
+  const current = typeof product.currentPrice === 'number' && product.currentPrice > 0
+    ? product.currentPrice
+    : parsePriceToNumber(product.price);
+  if (original > current && original > 0 && current > 0) {
+    return Math.round(((original - current) / original) * 100);
+  }
+  return 0;
+};
+
+// Composite ranking score combining best deals (discounts) and popularity (clicks)
+export const getBestProductScore = (p: Product): number => {
+  const discount = getEffectiveDiscount(p);
+  const clicks = p.clicksCount || 0;
+  const verifiedBonus = (p.dealStatus === 'verified' || p.dealStatus === 'approved') ? 10 : 0;
+  // Strongly weights high discount deals and click traffic so top products appear first
+  return (discount * 2) + (clicks * 2.5) + verifiedBonus;
+};
 
 interface MagazineViewProps {
   products: Product[];
@@ -31,6 +61,10 @@ interface MagazineViewProps {
   onOpenUpload: () => void;
   isLoggedIn: boolean;
   isLoading?: boolean;
+  isAdmin?: boolean;
+  onOpenPriceUpdate?: (product: Product) => void;
+  onSelectProduct?: (product: Product) => void;
+  onSelectPartner?: (partner: { id: string; name: string }) => void;
 }
 
 const CATEGORIES: CategoryType[] = [
@@ -54,6 +88,7 @@ const MagazineProductCard: React.FC<{
   onOpenShare: (product: Product) => void;
   onSelectProduct: (product: Product) => void;
   onAffiliateClick: (e: React.MouseEvent, product: Product) => void;
+  onSelectPartner?: (partner: { id: string; name: string }) => void;
 }> = ({
   product,
   index,
@@ -62,6 +97,7 @@ const MagazineProductCard: React.FC<{
   onOpenShare,
   onSelectProduct,
   onAffiliateClick,
+  onSelectPartner,
 }) => {
   const [imgLoaded, setImgLoaded] = useState(false);
   const [imgError, setImgError] = useState(false);
@@ -135,11 +171,14 @@ const MagazineProductCard: React.FC<{
         </button>
 
         {/* Discount Badge if available */}
-        {product.discountPercent && product.discountPercent > 0 && (
-          <div className="absolute bottom-4 left-4 z-10 px-2.5 py-0.5 rounded-md bg-emerald-600 text-white text-[10px] font-bold uppercase tracking-wider shadow">
-            {product.discountPercent}% OFF
-          </div>
-        )}
+        {(() => {
+          const discount = getEffectiveDiscount(product);
+          return discount > 0 ? (
+            <div className="absolute bottom-4 left-4 z-10 px-2.5 py-0.5 rounded-md bg-emerald-600 text-white text-[10px] font-bold uppercase tracking-wider shadow">
+              {discount}% OFF
+            </div>
+          ) : null;
+        })()}
       </div>
 
       {/* Editorial Body */}
@@ -174,17 +213,34 @@ const MagazineProductCard: React.FC<{
           <div>
             <div className="flex items-baseline gap-2">
               <span className="text-xl font-bold font-sans text-neutral-900 dark:text-white">
-                {product.price}
+                {formatPriceDisplay(product.price)}
               </span>
-              {product.originalPrice && product.originalPrice !== product.price && (
-                <span className="text-xs text-neutral-400 line-through">
-                  {product.originalPrice}
-                </span>
-              )}
+              {(product.originalPrice || product.mrp) &&
+                (product.originalPrice || product.mrp) !== product.price && (
+                  <span className="text-xs text-neutral-400 line-through">
+                    {formatPriceDisplay(product.originalPrice || product.mrp)}
+                  </span>
+                )}
             </div>
-            <span className="text-[10px] text-neutral-400 block mt-0.5">
-              Verified Affiliate Partner
-            </span>
+            <button
+              type="button"
+              id={`partner-profile-btn-${product.id}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (onSelectPartner) {
+                  onSelectPartner({
+                    id: product.uploaderId || '',
+                    name: product.uploaderName || 'Affiliate Partner',
+                  });
+                }
+              }}
+              className="group/author text-[11px] font-medium text-neutral-500 dark:text-neutral-400 hover:text-[#FF6E40] dark:hover:text-[#FF6E40] flex items-center gap-1 mt-0.5 transition-colors cursor-pointer text-left truncate max-w-[170px] sm:max-w-[200px]"
+              title={`View ${product.uploaderName || 'Affiliate Partner'}'s profile`}
+            >
+              <span className="truncate group-hover/author:underline underline-offset-2">
+                {product.uploaderName || 'Affiliate Partner'}
+              </span>
+            </button>
           </div>
 
           <div className="flex items-center gap-2">
@@ -223,6 +279,10 @@ export const MagazineView: React.FC<MagazineViewProps> = ({
   onOpenUpload,
   isLoggedIn,
   isLoading = false,
+  isAdmin = false,
+  onOpenPriceUpdate,
+  onSelectProduct,
+  onSelectPartner,
 }) => {
   // Initialize state from URL search params for direct deep-linking and SEO
   const [searchQuery, setSearchQuery] = useState<string>(() => {
@@ -253,6 +313,8 @@ export const MagazineView: React.FC<MagazineViewProps> = ({
       const params = new URLSearchParams(window.location.search);
       const sort = params.get('sort');
       if (
+        sort === 'best' ||
+        sort === 'best_deals' ||
         sort === 'price_low' ||
         sort === 'price_high' ||
         sort === 'most_clicked' ||
@@ -262,7 +324,7 @@ export const MagazineView: React.FC<MagazineViewProps> = ({
         return sort as SortOption;
       }
     }
-    return 'newest';
+    return 'best';
   });
   const [onlyFavorites, setOnlyFavorites] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
@@ -330,20 +392,65 @@ export const MagazineView: React.FC<MagazineViewProps> = ({
         return true;
       })
       .sort((a, b) => {
+        // Default: "best products on top" - prioritized by composite deal discount and click popularity
+        if (sortBy === 'best') {
+          const scoreA = getBestProductScore(a);
+          const scoreB = getBestProductScore(b);
+          if (scoreB !== scoreA) {
+            return scoreB - scoreA;
+          }
+          const discA = getEffectiveDiscount(a);
+          const discB = getEffectiveDiscount(b);
+          if (discB !== discA) {
+            return discB - discA;
+          }
+          const clicksA = a.clicksCount || 0;
+          const clicksB = b.clicksCount || 0;
+          if (clicksB !== clicksA) {
+            return clicksB - clicksA;
+          }
+          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        }
+        // Best Deals: strictly sorted by highest discount percentage
+        if (sortBy === 'best_deals') {
+          const discA = getEffectiveDiscount(a);
+          const discB = getEffectiveDiscount(b);
+          if (discB !== discA) {
+            return discB - discA;
+          }
+          const clicksA = a.clicksCount || 0;
+          const clicksB = b.clicksCount || 0;
+          if (clicksB !== clicksA) {
+            return clicksB - clicksA;
+          }
+          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        }
+        // Most Popular: strictly sorted by clicks
+        if (sortBy === 'most_clicked') {
+          const clicksA = a.clicksCount || 0;
+          const clicksB = b.clicksCount || 0;
+          if (clicksB !== clicksA) {
+            return clicksB - clicksA;
+          }
+          const discA = getEffectiveDiscount(a);
+          const discB = getEffectiveDiscount(b);
+          if (discB !== discA) {
+            return discB - discA;
+          }
+          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        }
+        // Uploading date sequence
         if (sortBy === 'newest') {
           return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
         }
-        if (sortBy === 'most_clicked') {
-          return (b.clicksCount || 0) - (a.clicksCount || 0);
-        }
         if (sortBy === 'price_low') {
-          const pA = parseFloat(a.price.replace(/[^0-9.]/g, '')) || 0;
-          const pB = parseFloat(b.price.replace(/[^0-9.]/g, '')) || 0;
+          const pA = parsePriceToNumber(a.price);
+          const pB = parsePriceToNumber(b.price);
           return pA - pB;
         }
         if (sortBy === 'price_high') {
-          const pA = parseFloat(a.price.replace(/[^0-9.]/g, '')) || 0;
-          const pB = parseFloat(b.price.replace(/[^0-9.]/g, '')) || 0;
+          const pA = parsePriceToNumber(a.price);
+          const pB = parsePriceToNumber(b.price);
           return pB - pA;
         }
         if (sortBy === 'alphabetical') {
@@ -360,7 +467,7 @@ export const MagazineView: React.FC<MagazineViewProps> = ({
     if (searchQuery.trim()) params.set('search', searchQuery.trim());
     if (selectedCategory !== 'All') params.set('category', selectedCategory);
     if (selectedStore !== 'All') params.set('store', selectedStore);
-    if (sortBy !== 'newest') params.set('sort', sortBy);
+    if (sortBy !== 'best') params.set('sort', sortBy);
     if (onlyFavorites) params.set('favorites', 'true');
 
     const newQueryString = params.toString();
@@ -544,15 +651,28 @@ export const MagazineView: React.FC<MagazineViewProps> = ({
               id="hub-all-btn"
               onClick={() => {
                 setSelectedStore('All');
-                setSortBy('newest');
+                setSortBy('best');
               }}
               className={`px-3 py-1.5 rounded-lg border transition-all cursor-pointer whitespace-nowrap font-medium ${
-                selectedStore === 'All' && sortBy === 'newest'
+                selectedStore === 'All' && (sortBy === 'best' || sortBy === 'newest')
                   ? 'border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-950'
                   : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-600 dark:text-neutral-400 hover:border-neutral-400'
               }`}
             >
-              All Finds
+              All Finds (Best on Top)
+            </button>
+
+            <button
+              id="hub-best-deals-btn"
+              onClick={() => setSortBy(sortBy === 'best_deals' ? 'best' : 'best_deals')}
+              className={`px-3 py-1.5 rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap font-medium ${
+                sortBy === 'best_deals'
+                  ? 'border-red-600 bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800 font-semibold'
+                  : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:border-red-300'
+              }`}
+            >
+              <TrendingUp className="w-3 h-3 text-red-600 dark:text-red-400" />
+              <span>Best Deals</span>
             </button>
 
             <button
@@ -596,7 +716,7 @@ export const MagazineView: React.FC<MagazineViewProps> = ({
 
             <button
               id="hub-low-cost-btn"
-              onClick={() => setSortBy(sortBy === 'price_low' ? 'newest' : 'price_low')}
+              onClick={() => setSortBy(sortBy === 'price_low' ? 'best' : 'price_low')}
               className={`px-3 py-1.5 rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap font-medium ${
                 sortBy === 'price_low'
                   ? 'border-emerald-600 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800 font-semibold'
@@ -609,7 +729,7 @@ export const MagazineView: React.FC<MagazineViewProps> = ({
 
             <button
               id="hub-quality-btn"
-              onClick={() => setSortBy(sortBy === 'most_clicked' ? 'newest' : 'most_clicked')}
+              onClick={() => setSortBy(sortBy === 'most_clicked' ? 'best' : 'most_clicked')}
               className={`px-3 py-1.5 rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap font-medium ${
                 sortBy === 'most_clicked'
                   ? 'border-purple-600 bg-purple-50 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800 font-semibold'
@@ -674,8 +794,10 @@ export const MagazineView: React.FC<MagazineViewProps> = ({
                   onChange={(e) => setSortBy(e.target.value as SortOption)}
                   className="px-3 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-xs focus:outline-none cursor-pointer"
                 >
-                  <option value="newest">Newest First</option>
+                  <option value="best">Best on Top (Deals &amp; Clicks)</option>
+                  <option value="best_deals">Best Deals (% Off)</option>
                   <option value="most_clicked">Most Popular (Clicks)</option>
+                  <option value="newest">Newest First</option>
                   <option value="price_low">Price: Low to High</option>
                   <option value="price_high">Price: High to Low</option>
                   <option value="alphabetical">Title A-Z</option>
@@ -814,8 +936,9 @@ export const MagazineView: React.FC<MagazineViewProps> = ({
                 isFav={favorites.includes(product.id)}
                 onToggleFavorite={onToggleFavorite}
                 onOpenShare={handleOpenShare}
-                onSelectProduct={setSelectedProductForModal}
+                onSelectProduct={onSelectProduct || setSelectedProductForModal}
                 onAffiliateClick={handleAffiliateClick}
+                onSelectPartner={onSelectPartner}
               />
             ))}
           </div>
@@ -830,6 +953,9 @@ export const MagazineView: React.FC<MagazineViewProps> = ({
         onToggleFavorite={onToggleFavorite}
         onOpenShare={handleOpenShare}
         onAffiliateClick={handleAffiliateClick}
+        isAdmin={isAdmin}
+        onOpenPriceUpdate={onOpenPriceUpdate}
+        onSelectPartner={onSelectPartner}
       />
 
       {/* Share Product & Affiliate Link Modal */}

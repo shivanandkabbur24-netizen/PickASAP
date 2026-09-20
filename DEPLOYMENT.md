@@ -32,8 +32,7 @@ npm run deploy:cloudflare
 Cloudflare will prompt you to create or link the project `pickasap` and deploy the `dist/` directory directly.
 
 ### Crucial Cloudflare Configuration Files Included:
-- `public/_redirects`: Directs all incoming URLs (`/*  /index.html  200`) to enable seamless client-side single-page app (SPA) routing on Cloudflare Pages without 404 errors on refresh.
-- `wrangler.jsonc`: Configured with `"pages_build_output_dir": "dist"` and `"assets": { "directory": "./dist", "not_found_handling": "single-page-application" }`. This supports both Cloudflare Pages and Cloudflare Workers static asset uploads seamlessly.
+- `wrangler.jsonc`: Configured with `"pages_build_output_dir": "dist"` and `"assets": { "directory": "./dist", "not_found_handling": "single-page-application" }`. This natively routes all client-side URLs to `index.html` without needing custom `_redirects` rules (which Cloudflare Workers rejects due to infinite redirect detection).
 - `public/_headers`: Enforces browser caching on hashed bundles in `/assets/` and prevents stale caching on `index.html`.
 - `.nvmrc` & `.node-version`: Pin Node 20 (20.19.0) to satisfy `@vitejs/plugin-react` and `undici` engine requirements.
 

@@ -17,7 +17,7 @@ This application is ready to deploy on both **Firebase Hosting** and **Cloudflar
 4. **Environment Variables**:
    Under **Settings > Environment variables**, add:
    - `NODE_VERSION`: `20`
-   *(Note: We have also committed `.nvmrc` and `.node-version` so Cloudflare automatically selects Node 20).*
+   *(Note: We have also committed `.nvmrc` and `.node-version` so Cloudflare automatically selects Node 20. The project uses standard `npm` and `package-lock.json`).*
 5. Click **Save and Deploy**.
 
 ### Option B: Via Cloudflare CLI (`wrangler`)

@@ -408,6 +408,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
           <div className="pt-4 border-t border-neutral-200/80 dark:border-neutral-800">
             <PriceHistoryChart
               productId={product.id}
+              product={product}
               currentPrice={product.currentPrice}
               isAdmin={isAdmin}
               onAdminUpdateClick={onOpenPriceUpdate ? () => onOpenPriceUpdate(product) : undefined}

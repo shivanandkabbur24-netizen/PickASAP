@@ -120,16 +120,25 @@ export const Navbar: React.FC<NavbarProps> = ({
                Exact user requirement:
                "add that 'add your own affiliate link' button on mobile screen also that + icon which is showed when the user has already logged in but to login through mobile first show the button in the right side of dark mode option"
             */
-            <button
-              id="upload-affiliate-links-btn"
-              onClick={() => setCurrentView('login')}
-              title="Add Link"
-              className="inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2 sm:py-2.5 rounded-full bg-neutral-900 hover:bg-black dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-950 text-[11px] sm:text-xs font-semibold uppercase tracking-wider transition-all shadow-sm hover:shadow active:scale-95 cursor-pointer whitespace-nowrap shrink-0"
-            >
-              <Plus className="w-3.5 h-3.5 stroke-[2.5] text-[#FF6E40]" />
-              <span className="hidden sm:inline">Add Link</span>
-              <span className="sm:hidden">Add Link</span>
-            </button>
+            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+              <button
+                id="nav-login-btn"
+                onClick={() => setCurrentView('login')}
+                className="px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-full border border-neutral-300 dark:border-neutral-700 hover:border-neutral-400 dark:hover:border-neutral-600 text-neutral-700 dark:text-neutral-200 text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap"
+              >
+                Sign In
+              </button>
+              <button
+                id="upload-affiliate-links-btn"
+                onClick={() => setCurrentView('login')}
+                title="Add your own affiliate link"
+                className="inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2 sm:py-2.5 rounded-full bg-neutral-900 hover:bg-black dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-950 text-[11px] sm:text-xs font-semibold uppercase tracking-wider transition-all shadow-sm hover:shadow active:scale-95 cursor-pointer whitespace-nowrap shrink-0"
+              >
+                <Plus className="w-3.5 h-3.5 stroke-[2.5] text-[#FF6E40]" />
+                <span className="hidden sm:inline">Add Link</span>
+                <span className="sm:hidden">Add Link</span>
+              </button>
+            </div>
           )}
         </div>
       </div>

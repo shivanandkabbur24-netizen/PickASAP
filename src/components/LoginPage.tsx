@@ -115,7 +115,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onSuccess, onCancel }) => 
     }
   };
 
-  // Google Login handling with graceful fallback
+  // Google Login handling
   const handleGoogleLogin = async () => {
     setLoading(true);
     setError('');
@@ -125,38 +125,19 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onSuccess, onCancel }) => 
         onSuccess(googleUser);
       }
     } catch (err: unknown) {
-      console.warn('Google sign-in fallback activated:', err);
-      // Auto-fallback to Shivanand Kabbur account so user is never locked out
-      const fallbackUser: UserProfile = {
-        id: 'DTORVHWkRQRBLp1vS7JfdVIvVBr1',
-        email: 'shivanandkabbur24@gmail.com',
-        name: 'Shivanand Kabbur',
-        role: 'admin',
-        isTrustedContributor: true,
-        approvedSubmissionCount: 16,
-        rejectedSubmissionCount: 0,
-        trustScore: 100,
-        trustedSince: '2026-01-01T00:00:00.000Z',
-      };
-      db.setCurrentUser(fallbackUser);
-      onSuccess(fallbackUser);
+      const authError = err as { code?: string; message?: string };
+      if (authError?.code === 'auth/unauthorized-domain') {
+        setError('Domain not yet authorized in Firebase Auth. Please ensure pickasap.shop is added to Authorized Domains in Firebase Console.');
+      } else if (authError?.code === 'auth/popup-blocked') {
+        setError('Google sign-in popup was blocked by your browser. Please allow popups for this site and try again.');
+      } else if (authError?.code === 'auth/network-request-failed') {
+        setError('Network connection failed. Please check your internet connection.');
+      } else {
+        setError(authError?.message || 'Google sign-in could not be completed. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleAdminFill = () => {
-    setEmail('shivanandkabbur24@gmail.com');
-    setPassword('admin123');
-    setName('Shivanand Kabbur');
-    setError('');
-  };
-
-  const handleDemoFill = () => {
-    setEmail('curator@pickasap.com');
-    setPassword('secret123');
-    setName('Elena Rostova');
-    setError('');
   };
 
   return (
@@ -171,26 +152,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onSuccess, onCancel }) => 
           <ArrowLeft className="w-4 h-4" />
           <span>Back to PickASAP Magazine</span>
         </button>
-
-        <div className="flex items-center gap-3">
-          <button
-            id="login-admin-credentials-btn"
-            onClick={handleAdminFill}
-            className="text-xs text-[#E8B072] hover:underline cursor-pointer tracking-wider font-semibold"
-            title="Autofill Shivanand Kabbur Admin credentials"
-          >
-            Autofill Admin (Shivanand)
-          </button>
-          <span className="text-neutral-600 text-xs">•</span>
-          <button
-            id="login-demo-credentials-btn"
-            onClick={handleDemoFill}
-            className="text-xs text-neutral-400 hover:text-neutral-200 hover:underline cursor-pointer tracking-wider"
-            title="Autofill quick demo credentials"
-          >
-            Autofill Test Creator
-          </button>
-        </div>
       </div>
 
       {/* Main split content matching Image 2 */}

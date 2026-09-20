@@ -76,8 +76,11 @@ const INITIAL_PRODUCTS: Product[] = (initialProductsRaw as Product[]).map((p) =>
   };
 });
 
-// Initialize Firebase App
-const app = initializeApp(firebaseConfig);
+// Initialize Firebase App with pickasap.shop authDomain
+const app = initializeApp({
+  ...firebaseConfig,
+  authDomain: 'pickasap.shop',
+});
 
 // Initialize Cloud Firestore with databaseId as prescribed by Firebase Integration Skill
 export const db = initializeFirestore(
@@ -179,7 +182,7 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 // Local storage key constants for fast caching and offline resilience
 const STORAGE_PRODUCTS = 'pickasap_products_v1';
 const STORAGE_CLICKS = 'pickasap_clicks_v1';
-const STORAGE_USER = 'pickasap_current_user_v1';
+const STORAGE_USER = 'pickasap_current_user_v2';
 const STORAGE_FAVORITES = 'pickasap_favorites_v1';
 const STORAGE_PRICE_HISTORY_PREFIX = 'pickasap_price_history_v1_';
 
@@ -1107,45 +1110,28 @@ export const databaseService = {
     );
   },
 
-  // Current user management
+  // Current user management: returns null if not logged in (visitor mode)
   getCurrentUser(): UserProfile | null {
     try {
       const raw = localStorage.getItem(STORAGE_USER);
-      let user: UserProfile | null = raw ? (JSON.parse(raw) as UserProfile) : null;
+      if (!raw) return null;
+      const user = JSON.parse(raw) as UserProfile;
+      if (!user || !user.email) return null;
 
-      // Default to Shivanand Kabbur (Admin & Verified Creator) if no user session is in localStorage
-      if (!user) {
-        user = {
-          id: 'DTORVHWkRQRBLp1vS7JfdVIvVBr1',
-          email: 'shivanandkabbur24@gmail.com',
-          name: 'Shivanand Kabbur',
-          role: 'admin',
-          isTrustedContributor: true,
-          approvedSubmissionCount: 16,
-          rejectedSubmissionCount: 0,
-          trustScore: 100,
-          trustedSince: '2026-01-01T00:00:00.000Z',
-          avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80',
-        };
-        localStorage.setItem(STORAGE_USER, JSON.stringify(user));
-      }
-
-      if (user) {
-        const cleanEmail = (user.email || '').toLowerCase().trim();
-        if (
-          cleanEmail === 'shivanandkabbur24@gmail.com' ||
-          cleanEmail.includes('admin') ||
-          user.id === 'DTORVHWkRQRBLp1vS7JfdVIvVBr1'
-        ) {
-          user.role = 'admin';
-          user.isTrustedContributor = true;
-          user.trustScore = 100;
-          if (cleanEmail === 'shivanandkabbur24@gmail.com') {
-            user.id = 'DTORVHWkRQRBLp1vS7JfdVIvVBr1';
-          }
-          if (!user.name || user.name === 'Admin' || user.name === 'Affiliate Partner') {
-            user.name = 'Shivanand Kabbur';
-          }
+      const cleanEmail = (user.email || '').toLowerCase().trim();
+      if (
+        cleanEmail === 'shivanandkabbur24@gmail.com' ||
+        cleanEmail.includes('admin') ||
+        user.id === 'DTORVHWkRQRBLp1vS7JfdVIvVBr1'
+      ) {
+        user.role = 'admin';
+        user.isTrustedContributor = true;
+        user.trustScore = 100;
+        if (cleanEmail === 'shivanandkabbur24@gmail.com') {
+          user.id = 'DTORVHWkRQRBLp1vS7JfdVIvVBr1';
+        }
+        if (!user.name || user.name === 'Admin' || user.name === 'Affiliate Partner') {
+          user.name = 'Shivanand Kabbur';
         }
       }
       return user;
@@ -1893,21 +1879,8 @@ export const databaseService = {
         return null;
       }
       
-      // In sandbox/iframe environments, popups or domain verification can be blocked
-      console.info('Google Auth environment notice, activating verified owner session:', authError?.message || err);
-      const fallbackUser: UserProfile = {
-        id: 'DTORVHWkRQRBLp1vS7JfdVIvVBr1',
-        email: 'shivanandkabbur24@gmail.com',
-        name: 'Shivanand Kabbur',
-        role: 'admin',
-        isTrustedContributor: true,
-        approvedSubmissionCount: 16,
-        rejectedSubmissionCount: 0,
-        trustScore: 100,
-        trustedSince: '2026-01-01T00:00:00.000Z',
-      };
-      this.setCurrentUser(fallbackUser);
-      return fallbackUser;
+      console.warn('Google sign-in exception:', authError?.message || err);
+      throw err;
     }
   },
 

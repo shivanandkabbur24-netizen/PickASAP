@@ -76,11 +76,8 @@ const INITIAL_PRODUCTS: Product[] = (initialProductsRaw as Product[]).map((p) =>
   };
 });
 
-// Initialize Firebase App with pickasap.shop authDomain
-const app = initializeApp({
-  ...firebaseConfig,
-  authDomain: 'pickasap.shop',
-});
+// Initialize Firebase App
+const app = initializeApp(firebaseConfig);
 
 // Initialize Cloud Firestore with databaseId as prescribed by Firebase Integration Skill
 export const db = initializeFirestore(
@@ -95,8 +92,11 @@ setLogLevel('silent');
 // Initialize Firebase Authentication
 export const auth = getAuth(app);
 
-// Google Auth Provider
+// Google Auth Provider - force account selection prompt so user sees account chooser dialog
 const googleProvider = new GoogleAuthProvider();
+googleProvider.setCustomParameters({
+  prompt: 'select_account',
+});
 
 // Listen to auth state changes to synchronize session automatically
 if (typeof window !== 'undefined') {

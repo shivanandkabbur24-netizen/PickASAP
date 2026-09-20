@@ -164,6 +164,7 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    db.signOutUser();
     db.setCurrentUser(null);
     setUser(null);
     setCurrentView('magazine');

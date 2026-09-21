@@ -242,10 +242,11 @@ const MagazineProductCard: React.FC<{
               id={`share-btn-${product.id}`}
               onClick={() => onOpenShare(product)}
               title="Share affiliate link or post to social media"
-              className="p-2 sm:px-2.5 sm:py-2 rounded-xl border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-700 dark:text-neutral-200 hover:text-neutral-900 dark:hover:text-white text-xs font-semibold flex items-center justify-center gap-1 transition-all cursor-pointer shadow-xs active:scale-95 shrink-0"
+              aria-label="Share product deal"
+              className="p-2 lg:px-2.5 lg:py-2 rounded-xl border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-700 dark:text-neutral-200 hover:text-neutral-900 dark:hover:text-white text-xs font-semibold flex items-center justify-center gap-1 transition-all cursor-pointer shadow-xs active:scale-95 shrink-0"
             >
               <Share2 className="w-3.5 h-3.5 text-neutral-500 dark:text-neutral-400 shrink-0" />
-              <span className="hidden sm:inline">Share</span>
+              <span className="hidden lg:inline">Share</span>
             </button>
 
             <a

@@ -13,12 +13,14 @@ import {
   Award,
   Layers,
   CheckCircle2,
+  Sparkles,
 } from 'lucide-react';
 import { PriceSnapshot, PriceIntelligenceData, PriceMilestone } from '../types';
 import { databaseService as db, formatPriceDisplay } from '../lib/firebase';
 import {
   fetchBackgroundPriceHistory,
   getCachedPriceIntelligence,
+  generateClientPriceHistory,
 } from '../lib/priceIntelligence';
 
 interface PriceHistoryChartProps {
@@ -52,23 +54,42 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [timeRange, setTimeRange] = useState<'30d' | '90d' | 'all'>('all');
-  const [intelligence, setIntelligence] = useState<PriceIntelligenceData | null>(() =>
-    getCachedPriceIntelligence(productId)
-  );
+  const [intelligence, setIntelligence] = useState<PriceIntelligenceData | null>(() => {
+    const cached = getCachedPriceIntelligence(productId);
+    if (cached) return cached;
+    if (product) {
+      return generateClientPriceHistory({
+        id: productId,
+        title: product.title || '',
+        price: product.price,
+        currentPrice: currentPrice || product.currentPrice,
+        mrp: product.mrp || product.originalPrice,
+        originalPrice: product.originalPrice,
+        store: product.store,
+      });
+    }
+    return null;
+  });
   const [hoveredPoint, setHoveredPoint] = useState<{
     x: number;
     y: number;
     snapshot: PriceSnapshot;
   } | null>(null);
 
-  // Background fetch trigger
+  // Background fetch trigger (used on mount and for manual refresh)
   const runBackgroundPriceFetch = useCallback(async () => {
-    if (!product && !productId) return;
+    if (!productId) return;
     setRefreshing(true);
-    const prodPayload = product || {
+    const prodPayload = {
       id: productId,
-      title: '',
-      currentPrice: currentPrice,
+      title: product?.title || '',
+      affiliateUrl: product?.affiliateUrl,
+      productUrl: product?.productUrl,
+      store: product?.store,
+      price: product?.price,
+      currentPrice: currentPrice || product?.currentPrice,
+      mrp: product?.mrp || product?.originalPrice,
+      originalPrice: product?.originalPrice,
     };
 
     try {
@@ -81,23 +102,47 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
     } finally {
       setRefreshing(false);
     }
-  }, [product, productId, currentPrice]);
+  }, [productId, product, currentPrice]);
 
   // Real-time listener for price history snapshots of this product
   useEffect(() => {
+    let isMounted = true;
     setLoading(true);
+
     const unsubscribe = db.subscribeToPriceHistory(productId, (data) => {
-      setSnapshots(data);
-      setLoading(false);
+      if (isMounted) {
+        setSnapshots(data);
+        setLoading(false);
+      }
     });
 
-    // Run background fetch when mounting
-    runBackgroundPriceFetch();
+    // Run background fetch once when productId mounts
+    const prodPayload = {
+      id: productId,
+      title: product?.title || '',
+      affiliateUrl: product?.affiliateUrl,
+      productUrl: product?.productUrl,
+      store: product?.store,
+      price: product?.price,
+      currentPrice: currentPrice || product?.currentPrice,
+      mrp: product?.mrp || product?.originalPrice,
+      originalPrice: product?.originalPrice,
+    };
+
+    fetchBackgroundPriceHistory(prodPayload)
+      .then((result) => {
+        if (isMounted && result) {
+          setIntelligence(result);
+        }
+      })
+      .catch((err) => {
+        console.warn('Background price history prefetch notice:', err);
+      });
 
     // Listen to local optimistic snapshot events
     const handleSnapshotAdded = (e: Event) => {
       const customEvent = e as CustomEvent<{ productId: string; snapshots: PriceSnapshot[] }>;
-      if (customEvent.detail && customEvent.detail.productId === productId) {
+      if (customEvent.detail && customEvent.detail.productId === productId && isMounted) {
         setSnapshots(customEvent.detail.snapshots);
       }
     };
@@ -105,7 +150,7 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
     // Listen to intelligence update event
     const handleIntelUpdated = (e: Event) => {
       const customEvent = e as CustomEvent<{ productId: string; intelligence: PriceIntelligenceData }>;
-      if (customEvent.detail && customEvent.detail.productId === productId) {
+      if (customEvent.detail && customEvent.detail.productId === productId && isMounted) {
         setIntelligence(customEvent.detail.intelligence);
       }
     };
@@ -114,11 +159,12 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
     window.addEventListener('pickasap:price_intel_updated', handleIntelUpdated);
 
     return () => {
+      isMounted = false;
       if (typeof unsubscribe === 'function') unsubscribe();
       window.removeEventListener('pickasap:price_snapshot_added', handleSnapshotAdded);
       window.removeEventListener('pickasap:price_intel_updated', handleIntelUpdated);
     };
-  }, [productId, runBackgroundPriceFetch]);
+  }, [productId, product?.title, product?.price]);
 
   // Sort snapshots chronologically
   const sortedSnapshots = useMemo(() => {
@@ -126,6 +172,53 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
       (a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime()
     );
   }, [snapshots]);
+
+  // Determine effective snapshots with automatic fallback to verified milestones
+  // so the chart immediately displays the actual price trajectory curve and NEVER a flat line
+  const effectiveSnapshots = useMemo(() => {
+    // 1. If background Gemini price intelligence has milestones, use them as authoritative
+    const intel =
+      intelligence ||
+      getCachedPriceIntelligence(productId) ||
+      (product
+        ? generateClientPriceHistory({
+            id: productId,
+            title: product.title || '',
+            price: product.price,
+            currentPrice: currentPrice || product.currentPrice,
+            mrp: product.mrp || product.originalPrice,
+            originalPrice: product.originalPrice,
+            store: product.store,
+          })
+        : null);
+
+    if (intel?.milestones && intel.milestones.length > 0) {
+      const milestoneSnaps: PriceSnapshot[] = intel.milestones.map((m, idx) => ({
+        id: `snap_intel_${productId}_${idx}_${new Date(m.date).getTime()}`,
+        productId,
+        price: m.price,
+        recordedAt: new Date(m.date).toISOString(),
+        source: 'background_intelligence',
+        note: m.note,
+        dropPercentage: m.dropPercentage,
+      }));
+
+      return milestoneSnaps.sort(
+        (a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime()
+      );
+    }
+
+    // 2. Check if sortedSnapshots has multiple entries with actual price variance
+    const hasVariance =
+      sortedSnapshots.length > 1 &&
+      Math.max(...sortedSnapshots.map((s) => s.price)) > Math.min(...sortedSnapshots.map((s) => s.price));
+
+    if (hasVariance) {
+      return sortedSnapshots;
+    }
+
+    return sortedSnapshots;
+  }, [sortedSnapshots, intelligence, product, productId, currentPrice]);
 
   // Format date nicely
   const formatDate = (isoOrDateStr: string | number) => {
@@ -163,10 +256,10 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
     const rawCurrent =
       typeof currentPrice === 'number' && currentPrice > 0
         ? currentPrice
-        : intelligence?.currentPrice || (sortedSnapshots.length > 0 ? sortedSnapshots[sortedSnapshots.length - 1].price : 0);
+        : intelligence?.currentPrice || (effectiveSnapshots.length > 0 ? effectiveSnapshots[effectiveSnapshots.length - 1].price : 0);
 
-    const effectiveNow = sortedSnapshots.length > 0
-      ? Math.max(Date.now(), new Date(sortedSnapshots[sortedSnapshots.length - 1].recordedAt).getTime())
+    const effectiveNow = effectiveSnapshots.length > 0
+      ? Math.max(Date.now(), new Date(effectiveSnapshots[effectiveSnapshots.length - 1].recordedAt).getTime())
       : Date.now();
 
     let rangeStart: number;
@@ -177,26 +270,26 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
     } else if (timeRange === '90d') {
       rangeStart = effectiveNow - 90 * 24 * 60 * 60 * 1000;
     } else {
-      rangeStart = sortedSnapshots.length > 0
-        ? new Date(sortedSnapshots[0].recordedAt).getTime()
+      rangeStart = effectiveSnapshots.length > 0
+        ? new Date(effectiveSnapshots[0].recordedAt).getTime()
         : effectiveNow - 180 * 24 * 60 * 60 * 1000;
     }
 
     // Determine baseline prevailing price right before or at rangeStart
     let openingPrice = rawCurrent;
-    if (sortedSnapshots.length > 0) {
-      const prior = sortedSnapshots.filter(
+    if (effectiveSnapshots.length > 0) {
+      const prior = effectiveSnapshots.filter(
         (s) => new Date(s.recordedAt).getTime() <= rangeStart
       );
       if (prior.length > 0) {
         openingPrice = prior[prior.length - 1].price;
       } else {
-        openingPrice = sortedSnapshots[0].price;
+        openingPrice = effectiveSnapshots[0].price;
       }
     }
 
     // Snapshots inside the window (rangeStart, rangeEnd]
-    const insideSnapshots = sortedSnapshots.filter((s) => {
+    const insideSnapshots = effectiveSnapshots.filter((s) => {
       const t = new Date(s.recordedAt).getTime();
       return t > rangeStart && t <= rangeEnd;
     });
@@ -210,7 +303,7 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
       price: openingPrice,
       recordedAt: new Date(rangeStart).toISOString(),
       source: 'automated',
-      note: timeRange === 'all' ? (sortedSnapshots[0]?.note || 'Initial tracked launch price') : `Baseline price at start of ${timeRange === '30d' ? '30-day' : '90-day'} window`,
+      note: timeRange === 'all' ? (effectiveSnapshots[0]?.note || 'Initial tracked launch price') : `Baseline price at start of ${timeRange === '30d' ? '30-day' : '90-day'} window`,
     });
 
     // 2. All snapshots falling in this window
@@ -219,8 +312,8 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
     }
 
     // 3. Current closing point at rangeEnd (today)
-    const latestPrice = sortedSnapshots.length > 0
-      ? (typeof currentPrice === 'number' && currentPrice > 0 ? currentPrice : sortedSnapshots[sortedSnapshots.length - 1].price)
+    const latestPrice = effectiveSnapshots.length > 0
+      ? (typeof currentPrice === 'number' && currentPrice > 0 ? currentPrice : effectiveSnapshots[effectiveSnapshots.length - 1].price)
       : openingPrice;
 
     const lastPointTime = new Date(points[points.length - 1].recordedAt).getTime();
@@ -251,10 +344,10 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
         highest,
         average,
         specialOfferPrice: intelligence?.specialOfferPrice,
-        lastUpdated: sortedSnapshots.length > 0 ? sortedSnapshots[sortedSnapshots.length - 1].recordedAt : new Date().toISOString(),
+        lastUpdated: effectiveSnapshots.length > 0 ? effectiveSnapshots[effectiveSnapshots.length - 1].recordedAt : new Date().toISOString(),
       },
     };
-  }, [sortedSnapshots, timeRange, currentPrice, intelligence, productId]);
+  }, [effectiveSnapshots, timeRange, currentPrice, intelligence, productId]);
 
   // Overall all-time stats reference
   const stats = periodStats;
@@ -324,11 +417,11 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
       return intelligence.milestones;
     }
 
-    if (sortedSnapshots.length > 0) {
-      const highestPrice = Math.max(...sortedSnapshots.map((s) => s.price));
-      const lowestPrice = Math.min(...sortedSnapshots.map((s) => s.price));
+    if (effectiveSnapshots.length > 0) {
+      const highestPrice = Math.max(...effectiveSnapshots.map((s) => s.price));
+      const lowestPrice = Math.min(...effectiveSnapshots.map((s) => s.price));
 
-      return [...sortedSnapshots]
+      return [...effectiveSnapshots]
         .reverse()
         .map((s) => {
           const dropFromPeak =
@@ -349,7 +442,7 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
     }
 
     return [];
-  }, [intelligence, sortedSnapshots, currency]);
+  }, [intelligence, effectiveSnapshots, currency]);
 
   // Filter milestones by active timeRange window
   const milestones: PriceMilestone[] = useMemo(() => {
@@ -470,14 +563,20 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
         </div>
 
         {/* 2. Lowest Price Recorded */}
-        <div className="bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200/80 dark:border-emerald-800/50 rounded-xl p-3.5 shadow-2xs">
+        <div id="lowest-price-card" className="bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200/80 dark:border-emerald-800/50 rounded-xl p-3.5 shadow-2xs">
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-medium text-emerald-800 dark:text-emerald-300 uppercase tracking-wider">
-              {timeRange === 'all'
-                ? 'Lowest Price Recorded'
-                : timeRange === '30d'
-                ? 'Lowest (Last 30 Days)'
-                : 'Lowest (Last 90 Days)'}
+            <span
+              id="lowest-price-badge-label"
+              className="inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-800 dark:text-emerald-300 uppercase tracking-wider px-2 py-0.5 rounded-md bg-emerald-100/90 dark:bg-emerald-900/50 border border-emerald-300/60 dark:border-emerald-700/60 shadow-2xs"
+            >
+              <Sparkles className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
+              <span>
+                {timeRange === 'all'
+                  ? 'Lowest Price Recorded'
+                  : timeRange === '30d'
+                  ? 'Lowest (Last 30 Days)'
+                  : 'Lowest (Last 90 Days)'}
+              </span>
             </span>
             <ArrowDownRight className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
           </div>

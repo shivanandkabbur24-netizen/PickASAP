@@ -187,118 +187,64 @@ const STORAGE_FAVORITES = 'pickasap_favorites_v1';
 const STORAGE_PRICE_HISTORY_PREFIX = 'pickasap_price_history_v1_';
 
 export const getStoredPriceHistory = (productId: string): PriceSnapshot[] => {
+  // 1. Try reading stored snapshots from localStorage
   try {
     const raw = localStorage.getItem(`${STORAGE_PRICE_HISTORY_PREFIX}${productId}`);
     if (raw) {
       const list = JSON.parse(raw);
-      if (Array.isArray(list) && list.length > 0) return list;
+      if (Array.isArray(list) && list.length > 0) {
+        // If the stored snapshots are NOT the legacy identical auto-generated items, return them
+        const isLegacyFakeInit = list.every((s: PriceSnapshot) => s.id && s.id.startsWith('snap_init_'));
+        if (!isLegacyFakeInit) {
+          return list;
+        }
+      }
     }
   } catch (e) {
     console.warn('Price history storage read notice:', e);
   }
 
-  // Look up product to check if it's Samsung S26 Ultra or to generate realistic baseline snapshots
-  const products = getStoredProducts();
-  const product = products.find((p) => p.id === productId);
-
-  // Seed realistic verified snapshots for Samsung Galaxy S26 Ultra 5G
-  const isS26 =
-    productId === 'prod_1789361402473_jrho5' ||
-    (product &&
-      (product.title.toLowerCase().includes('s26 ultra') ||
-        (product.affiliateUrl && product.affiliateUrl.includes('u_PO6pNNNN'))));
-
-  if (isS26) {
-    const starterSnaps: PriceSnapshot[] = [
-      {
-        id: 'snap_s26_1',
-        price: 139999,
-        recordedAt: '2026-02-27T10:00:00.000Z',
-        source: 'initial',
-        note: 'Highest recorded price at launch',
-      },
-      {
-        id: 'snap_s26_2',
-        price: 123999,
-        recordedAt: '2026-06-22T14:30:00.000Z',
-        source: 'admin_verified',
-        note: 'Lowest overall deal price with bank offers at ₹1,23,999',
-        dropPercentage: '11.4% drop',
-      },
-      {
-        id: 'snap_s26_3',
-        price: 124999,
-        recordedAt: '2026-07-02T11:15:00.000Z',
-        source: 'admin_verified',
-        note: 'Lowest base price reached at ₹1,24,999',
-      },
-      {
-        id: 'snap_s26_4',
-        price: 124999,
-        recordedAt: '2026-08-10T16:45:00.000Z',
-        source: 'admin_verified',
-        note: 'Temporary price drop to all-time low (10.7% drop)',
-        dropPercentage: '10.7% drop',
-      },
-      {
-        id: 'snap_s26_5',
-        price: 130999,
-        recordedAt: '2026-09-04T09:20:00.000Z',
-        source: 'admin_verified',
-        note: 'Price dropped from ₹1,39,999 to ₹1,30,999 (6.4% drop)',
-        dropPercentage: '6.4% drop',
-      },
-    ];
-    setStoredPriceHistory(productId, starterSnaps);
-    return starterSnaps;
+  // 2. Check if background Gemini price intelligence has already cached milestones
+  try {
+    const intelRaw = localStorage.getItem(`pickasap_price_intel_${productId}`);
+    if (intelRaw) {
+      const intel = JSON.parse(intelRaw);
+      if (Array.isArray(intel?.milestones) && intel.milestones.length > 0) {
+        const converted: PriceSnapshot[] = intel.milestones.map((m: any, idx: number) => ({
+          id: `snap_intel_${productId}_${idx}_${new Date(m.date).getTime()}`,
+          productId,
+          price: m.price,
+          recordedAt: new Date(m.date).toISOString(),
+          source: 'background_intelligence',
+          note: m.note + (m.dropPercentage ? ` (${m.dropPercentage})` : ''),
+          dropPercentage: m.dropPercentage,
+        }));
+        converted.sort((a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime());
+        setStoredPriceHistory(productId, converted);
+        return converted;
+      }
+    }
+  } catch (e) {
+    console.warn('Intelligence storage read notice:', e);
   }
 
-  // If a product exists, generate a baseline multi-snapshot timeline from its pricing
+  // 3. If no history or intelligence is cached yet, return a single current snapshot
+  const products = getStoredProducts();
+  const product = products.find((p) => p.id === productId);
   if (product) {
     const current = product.currentPrice ?? parsePriceToNumber(product.price);
     if (current > 0) {
-      const orig = parsePriceToNumber(product.originalPrice) || parsePriceToNumber(product.mrp);
-      const highest = orig > current ? orig : Math.round(current * 1.15);
-      const lowest = Math.round(current * 0.91);
-      const now = new Date();
-      const d30 = new Date(now.getTime() - 30 * 86400000);
-      const d90 = new Date(now.getTime() - 90 * 86400000);
-      const d120 = new Date(now.getTime() - 120 * 86400000);
-
-      const generated: PriceSnapshot[] = [
+      const initialSnapshot: PriceSnapshot[] = [
         {
-          id: `snap_init_launch_${product.id}`,
-          price: highest,
-          recordedAt: d120.toISOString(),
-          source: 'initial',
-          note: 'Highest recorded launch / baseline price',
-        },
-        {
-          id: `snap_init_low_${product.id}`,
-          price: lowest,
-          recordedAt: d90.toISOString(),
-          source: 'admin_verified',
-          note: 'Lowest recorded promotional price',
-          dropPercentage: `${Math.round(((highest - lowest) / highest) * 100)}% drop`,
-        },
-        {
-          id: `snap_init_mid_${product.id}`,
-          price: Math.round((current + lowest) / 2),
-          recordedAt: d30.toISOString(),
-          source: 'admin_verified',
-          note: 'Festival season price observation',
-        },
-        {
-          id: `snap_init_cur_${product.id}`,
+          id: `snap_live_${productId}_${Date.now()}`,
+          productId,
           price: current,
-          recordedAt: now.toISOString(),
+          recordedAt: new Date().toISOString(),
           source: 'admin_verified',
-          note: 'Current verified price',
-          dropPercentage: highest > current ? `${Math.round(((highest - current) / highest) * 100)}% drop from peak` : undefined,
+          note: 'Current verified price point',
         },
       ];
-      setStoredPriceHistory(productId, generated);
-      return generated;
+      return initialSnapshot;
     }
   }
 
@@ -744,7 +690,7 @@ export const databaseService = {
 
     const path = `products/${productId}/priceHistory`;
     return onSnapshot(
-      query(collection(db, path), orderBy('recordedAt', 'asc')),
+      collection(db, path),
       (snapshot) => {
         const items: PriceSnapshot[] = [];
         snapshot.forEach((docSnap) => {
@@ -755,8 +701,16 @@ export const databaseService = {
         });
         if (items.length > 0) {
           items.sort((a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime());
-          setStoredPriceHistory(productId, items);
-          onData(items);
+          const baseline = getStoredPriceHistory(productId);
+          const itemsFlat = items.length <= 1 || Math.max(...items.map((s) => s.price)) === Math.min(...items.map((s) => s.price));
+          const baselineRich = baseline.length > 1 && Math.max(...baseline.map((s) => s.price)) > Math.min(...baseline.map((s) => s.price));
+
+          if (itemsFlat && baselineRich) {
+            onData(baseline);
+          } else {
+            setStoredPriceHistory(productId, items);
+            onData(items);
+          }
         } else {
           // If Firestore has no snapshots recorded yet (e.g. static Cloudflare Pages deployment), serve local baseline
           const fallbackSnaps = getStoredPriceHistory(productId);
@@ -989,12 +943,12 @@ export const databaseService = {
   async getClicks(): Promise<ClickRecord[]> {
     const path = 'clicks';
     try {
-      const q = query(collection(db, path), orderBy('timestamp', 'desc'), limit(1000));
-      const snapshot = await getDocs(q);
+      const snapshot = await getDocs(collection(db, path));
       const items: ClickRecord[] = [];
       snapshot.forEach((docSnap) => {
         items.push(docSnap.data() as ClickRecord);
       });
+      items.sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime());
       setStoredClicks(items);
       return items;
     } catch (error) {
@@ -1094,12 +1048,13 @@ export const databaseService = {
 
     const path = 'clicks';
     return onSnapshot(
-      query(collection(db, path), orderBy('timestamp', 'desc'), limit(1000)),
+      collection(db, path),
       (snapshot) => {
         const items: ClickRecord[] = [];
         snapshot.forEach((docSnap) => {
           items.push(docSnap.data() as ClickRecord);
         });
+        items.sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime());
         setStoredClicks(items);
         onData(items);
       },

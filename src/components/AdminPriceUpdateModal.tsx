@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { X, ShieldCheck, Tag, Calendar, AlertCircle, CheckCircle2, DollarSign, Clock, ExternalLink, Percent, Search, Check } from 'lucide-react';
+import { X, ShieldCheck, Tag, Calendar, AlertCircle, CheckCircle2, DollarSign, Clock, ExternalLink, Percent, Search, Check, Sparkles } from 'lucide-react';
 import { Product } from '../types';
 import { databaseService as db, formatPriceDisplay, parsePriceToNumber } from '../lib/firebase';
 
@@ -71,12 +71,45 @@ export const AdminPriceUpdateModal: React.FC<AdminPriceUpdateModalProps> = ({
     }
   }, [selectedProduct, allProducts, isOpen]);
 
+  // Helper to extract clean numeric value from input strings
+  const toCleanNumber = (val: string): number => {
+    if (!val) return NaN;
+    const cleaned = val.toString().replace(/[^0-9.]/g, '');
+    return parseFloat(cleaned);
+  };
+
+  // Reusable discount calculation from price and MRP
+  const calculateDiscount = (priceVal: string, mrpVal: string): string => {
+    const numPrice = toCleanNumber(priceVal);
+    const numMrp = toCleanNumber(mrpVal);
+    if (!isNaN(numPrice) && !isNaN(numMrp) && numMrp > 0) {
+      if (numMrp > numPrice) {
+        const calc = Math.round(((numMrp - numPrice) / numMrp) * 100);
+        return calc.toString();
+      } else if (numMrp === numPrice) {
+        return '0';
+      }
+    }
+    return '';
+  };
+
   const populateFields = (product: Product) => {
     const numPrice = product.currentPrice ?? parsePriceToNumber(product.price);
-    setNewPrice(numPrice > 0 ? numPrice.toString() : '');
-    setMrp(product.mrp || product.originalPrice || '');
+    const priceStr = numPrice > 0 ? numPrice.toString() : '';
+    setNewPrice(priceStr);
+
+    const rawMrp = product.mrp || product.originalPrice || '';
+    const cleanMrp = rawMrp ? rawMrp.toString().replace(/[^0-9.]/g, '') : '';
+    setMrp(cleanMrp);
+
     const disc = product.discount ?? product.discountPercent;
-    setDiscount(disc !== undefined ? disc.toString() : '');
+    if (disc !== undefined && disc !== null) {
+      setDiscount(disc.toString());
+    } else {
+      const autoDisc = calculateDiscount(priceStr, cleanMrp);
+      setDiscount(autoDisc);
+    }
+
     setOfferDescription(product.offerDescription || '');
     setOfferExpiry(product.offerExpiry || '');
     setDealStatus((product.dealStatus as 'verified' | 'pending' | 'expired') || 'verified');
@@ -97,26 +130,46 @@ export const AdminPriceUpdateModal: React.FC<AdminPriceUpdateModalProps> = ({
 
   const currentProduct = allProducts.find((p) => p.id === activeProductId) || selectedProduct;
 
-  // Auto-calculate discount percentage when MRP or New Price changes
+  // Auto-calculate discount percentage reactively whenever newPrice or mrp changes
+  useEffect(() => {
+    const numPrice = toCleanNumber(newPrice);
+    const numMrp = toCleanNumber(mrp);
+    if (!isNaN(numPrice) && !isNaN(numMrp) && numMrp > 0) {
+      if (numMrp >= numPrice) {
+        const calc = Math.round(((numMrp - numPrice) / numMrp) * 100);
+        setDiscount(calc.toString());
+      } else {
+        setDiscount('0');
+      }
+    }
+  }, [newPrice, mrp]);
+
   const handlePriceChange = (val: string) => {
     setNewPrice(val);
-    const numPrice = parseFloat(val);
-    const numMrp = parseFloat(mrp);
-    if (!isNaN(numPrice) && !isNaN(numMrp) && numMrp > numPrice && numMrp > 0) {
-      const calc = Math.round(((numMrp - numPrice) / numMrp) * 100);
-      setDiscount(calc.toString());
-    }
   };
 
   const handleMrpChange = (val: string) => {
     setMrp(val);
-    const numPrice = parseFloat(newPrice);
-    const numMrp = parseFloat(val);
+  };
+
+  const savingsAmount = useMemo(() => {
+    const numPrice = toCleanNumber(newPrice);
+    const numMrp = toCleanNumber(mrp);
+    if (!isNaN(numPrice) && !isNaN(numMrp) && numMrp > numPrice) {
+      return Math.round(numMrp - numPrice);
+    }
+    return 0;
+  }, [newPrice, mrp]);
+
+  const isAutoCalculated = useMemo(() => {
+    const numPrice = toCleanNumber(newPrice);
+    const numMrp = toCleanNumber(mrp);
     if (!isNaN(numPrice) && !isNaN(numMrp) && numMrp > numPrice && numMrp > 0) {
       const calc = Math.round(((numMrp - numPrice) / numMrp) * 100);
-      setDiscount(calc.toString());
+      return discount === calc.toString();
     }
-  };
+    return false;
+  }, [newPrice, mrp, discount]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -407,23 +460,48 @@ export const AdminPriceUpdateModal: React.FC<AdminPriceUpdateModalProps> = ({
             </div>
 
             {/* Discount Percent */}
-            <div>
-              <label className="block text-xs font-semibold text-neutral-700 dark:text-neutral-200 mb-1">
-                Discount Percentage (%)
-              </label>
+            <div
+              id="admin-discount-container"
+              className="flex flex-col justify-between p-2.5 sm:p-3 rounded-xl bg-neutral-50/80 dark:bg-neutral-900/60 border border-neutral-200/90 dark:border-neutral-800 transition-all shadow-xs"
+            >
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-xs font-semibold text-neutral-800 dark:text-neutral-200">
+                  Discount Percentage (%)
+                </label>
+                {isAutoCalculated ? (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950/70 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 animate-pulse">
+                    <Sparkles className="w-2.5 h-2.5 text-emerald-500" />
+                    Auto-Calculated
+                  </span>
+                ) : (
+                  <span className="text-[10px] text-neutral-400 font-medium">Editable</span>
+                )}
+              </div>
               <div className="relative">
                 <input
                   id="admin-discount-input"
                   type="number"
                   min="0"
                   max="100"
-                  placeholder="e.g. 27"
+                  placeholder="Auto-calculated"
                   value={discount}
                   onChange={(e) => setDiscount(e.target.value)}
-                  className="w-full px-3 py-2 bg-neutral-50 dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-xl text-sm text-neutral-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-[#FF6E40]"
+                  className="w-full px-3 py-2 bg-white dark:bg-neutral-850 border border-neutral-300 dark:border-neutral-700 rounded-lg text-sm font-bold text-neutral-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-[#FF6E40] transition-colors"
                 />
-                <span className="absolute right-3 top-2.5 text-neutral-400 text-xs font-semibold">%</span>
+                <span className="absolute right-3 top-2.5 text-neutral-500 dark:text-neutral-400 text-xs font-bold">%</span>
               </div>
+              {savingsAmount > 0 && discount ? (
+                <div className="mt-1.5 flex items-center justify-between text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+                  <span>Save ₹{savingsAmount.toLocaleString('en-IN')}</span>
+                  <span className="px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60">
+                    {discount}% OFF
+                  </span>
+                </div>
+              ) : (
+                <p className="mt-1.5 text-[10px] text-neutral-400 dark:text-neutral-500">
+                  Auto-calculates immediately as you type Original MRP &amp; New Price
+                </p>
+              )}
             </div>
           </div>
 

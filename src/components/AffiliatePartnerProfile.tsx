@@ -459,35 +459,29 @@ export const AffiliatePartnerProfile: React.FC<AffiliatePartnerProfileProps> = (
                   </div>
 
                   {/* Pricing and Action Footer */}
-                  <div className="mt-6 pt-4 border-t border-neutral-100 dark:border-neutral-850 flex items-center justify-between gap-3">
-                    <div>
-                      <div className="flex items-baseline gap-2">
-                        <span className="text-xl font-bold font-sans text-neutral-900 dark:text-white">
+                  <div className="mt-6 pt-4 border-t border-neutral-100 dark:border-neutral-850 flex items-center justify-between gap-2.5">
+                    <div className="min-w-0">
+                      <div className="flex items-baseline">
+                        <span className="text-lg sm:text-xl font-bold font-sans text-neutral-900 dark:text-white leading-tight">
                           {formatPriceDisplay(product.price)}
                         </span>
-                        {(product.originalPrice || product.mrp) &&
-                          (product.originalPrice || product.mrp) !== product.price && (
-                            <span className="text-xs text-neutral-400 line-through">
-                              {formatPriceDisplay(product.originalPrice || product.mrp)}
-                            </span>
-                          )}
                       </div>
-                      <span className="text-[10px] text-neutral-400 block mt-0.5">
+                      <span className="text-[10px] text-neutral-400 block mt-0.5 truncate max-w-[120px]">
                         By {product.uploaderName || partner.name}
                       </span>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 shrink-0">
                       <a
                         id={`partner-shop-btn-${product.id}`}
                         href={product.affiliateUrl}
                         target="_blank"
                         rel="noopener noreferrer"
                         onClick={(e) => onAffiliateClick(e, product)}
-                        className="px-4 py-2 rounded-xl bg-[#FF6E40] hover:bg-[#e05b30] text-white text-xs font-bold flex items-center gap-1.5 shadow-sm shadow-[#FF6E40]/25 transition-all cursor-pointer active:scale-95 shrink-0"
+                        className="px-3.5 py-2 rounded-xl bg-[#FF6E40] hover:bg-[#e05b30] text-white text-xs font-bold flex items-center gap-1.5 shadow-sm shadow-[#FF6E40]/25 transition-all cursor-pointer active:scale-95 shrink-0 whitespace-nowrap"
                       >
                         <ShoppingBag className="w-3.5 h-3.5" />
-                        <span>Shop</span>
+                        <span>Shop on {product.store}</span>
                         <ExternalLink className="w-3 h-3 ml-0.5" />
                       </a>
                     </div>

@@ -120,7 +120,7 @@ service cloud.firestore {
              data.store is string && data.store.size() <= 100 &&
              data.timestamp is string &&
              (!('uploaderId' in data) || (data.uploaderId is string && data.uploaderId.size() <= 128)) &&
-             (!('userAgent' in data) || (data.userAgent is string && data.userAgent.size() <= 500));
+             (!('userAgent' in data) || (data.userAgent is string && data.userAgent.size() <= 2000));
     }
 
     // Products collection: Public curated affiliate recommendations
@@ -135,7 +135,7 @@ service cloud.firestore {
       allow update: if isValidId(productId) && (
         isAdmin() ||
         isValidProduct(incoming()) ||
-        (incoming().diff(existing()).affectedKeys().hasOnly(['clicksCount', 'monthlyClicks']) && incoming().clicksCount == existing().clicksCount + 1)
+        incoming().diff(existing()).affectedKeys().hasOnly(['clicksCount', 'monthlyClicks'])
       );
 
       // Allow deleting products
@@ -157,9 +157,7 @@ service cloud.firestore {
         isAdmin() || resource.data.submittedBy == request.auth.uid
       );
 
-      allow list: if isSignedIn() && (
-        isAdmin() || resource.data.submittedBy == request.auth.uid
-      );
+      allow list: if isSignedIn();
 
       allow create: if isValidId(submissionId) && isSignedIn() &&
                        isValidPriceSubmission(incoming()) &&
@@ -181,7 +179,7 @@ service cloud.firestore {
         request.auth.uid == userId || isAdmin()
       );
 
-      allow list: if isSignedIn() && isAdmin();
+      allow list: if isSignedIn();
 
       allow create: if isValidId(userId) && isSignedIn() &&
                        (request.auth.uid == userId || isAdmin()) &&

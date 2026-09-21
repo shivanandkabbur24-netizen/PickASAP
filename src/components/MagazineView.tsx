@@ -209,18 +209,12 @@ const MagazineProductCard: React.FC<{
         </div>
 
         {/* Price and CTA */}
-        <div className="pt-4 border-t border-neutral-100 dark:border-neutral-800/80 flex items-center justify-between gap-3">
-          <div>
-            <div className="flex items-baseline gap-2">
-              <span className="text-xl font-bold font-sans text-neutral-900 dark:text-white">
+        <div className="pt-4 border-t border-neutral-100 dark:border-neutral-800/80 flex items-center justify-between gap-2.5">
+          <div className="min-w-0">
+            <div className="flex items-baseline">
+              <span className="text-lg sm:text-xl font-bold font-sans text-neutral-900 dark:text-white leading-tight">
                 {formatPriceDisplay(product.price)}
               </span>
-              {(product.originalPrice || product.mrp) &&
-                (product.originalPrice || product.mrp) !== product.price && (
-                  <span className="text-xs text-neutral-400 line-through">
-                    {formatPriceDisplay(product.originalPrice || product.mrp)}
-                  </span>
-                )}
             </div>
             <button
               type="button"
@@ -234,7 +228,7 @@ const MagazineProductCard: React.FC<{
                   });
                 }
               }}
-              className="group/author text-[11px] font-medium text-neutral-500 dark:text-neutral-400 hover:text-[#FF6E40] dark:hover:text-[#FF6E40] flex items-center gap-1 mt-0.5 transition-colors cursor-pointer text-left truncate max-w-[170px] sm:max-w-[200px]"
+              className="group/author text-[11px] font-medium text-neutral-500 dark:text-neutral-400 hover:text-[#FF6E40] dark:hover:text-[#FF6E40] flex items-center gap-1 mt-0.5 transition-colors cursor-pointer text-left truncate max-w-[110px] sm:max-w-[140px]"
               title={`View ${product.uploaderName || 'Affiliate Partner'}'s profile`}
             >
               <span className="truncate group-hover/author:underline underline-offset-2">
@@ -243,15 +237,15 @@ const MagazineProductCard: React.FC<{
             </button>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             <button
               id={`share-btn-${product.id}`}
               onClick={() => onOpenShare(product)}
               title="Share affiliate link or post to social media"
-              className="px-3 py-2 rounded-xl border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-700 dark:text-neutral-200 hover:text-neutral-900 dark:hover:text-white text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-xs active:scale-95"
+              className="p-2 sm:px-2.5 sm:py-2 rounded-xl border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-700 dark:text-neutral-200 hover:text-neutral-900 dark:hover:text-white text-xs font-semibold flex items-center justify-center gap-1 transition-all cursor-pointer shadow-xs active:scale-95 shrink-0"
             >
-              <Share2 className="w-3.5 h-3.5 text-neutral-500 dark:text-neutral-400" />
-              <span>Share</span>
+              <Share2 className="w-3.5 h-3.5 text-neutral-500 dark:text-neutral-400 shrink-0" />
+              <span className="hidden sm:inline">Share</span>
             </button>
 
             <a
@@ -260,10 +254,10 @@ const MagazineProductCard: React.FC<{
               target="_blank"
               rel="noopener noreferrer"
               onClick={(e) => onAffiliateClick(e, product)}
-              className="px-4 py-2.5 rounded-xl bg-neutral-900 hover:bg-black dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-950 text-xs font-semibold flex items-center gap-1.5 transition-all shadow active:scale-95 cursor-pointer"
+              className="px-3 py-2 sm:px-3.5 sm:py-2 rounded-xl bg-neutral-900 hover:bg-black dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-950 text-xs font-semibold flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-95 cursor-pointer whitespace-nowrap shrink-0"
             >
               <span>Shop on {product.store}</span>
-              <ArrowUpRight className="w-3.5 h-3.5" />
+              <ArrowUpRight className="w-3.5 h-3.5 shrink-0" />
             </a>
           </div>
         </div>

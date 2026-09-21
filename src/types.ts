@@ -25,6 +25,44 @@ export interface PriceMilestone {
   isHighest?: boolean;
 }
 
+export interface RetailerPriceItem {
+  retailer: string;
+  storeKey: 'amazon' | 'flipkart' | 'croma' | 'reliance' | 'tatacliq' | 'vijaysales' | 'brand' | string;
+  price: number;
+  formattedPrice: string;
+  mrp?: number;
+  formattedMrp?: string;
+  discountPercent?: number;
+  priceDiff: number; // difference vs current listed price; negative means cheaper (savings), positive means more expensive
+  priceDiffFormatted: string;
+  priceDiffPercent: number;
+  isLowest: boolean;
+  isCurrentStore?: boolean;
+  availability: string;
+  deliveryTime: string;
+  specialOffer?: string;
+  affiliateUrl: string;
+  rating?: number;
+  ratingCount?: string;
+  badge?: string;
+}
+
+export interface PriceComparisonData {
+  productId: string;
+  productTitle: string;
+  currentPrice: number;
+  currentStore: string;
+  lowestPrice: number;
+  highestPrice: number;
+  maxSavings: number;
+  cheapestRetailer: string;
+  retailers: RetailerPriceItem[];
+  summary: string;
+  verdict: string;
+  lastUpdated: string;
+  source?: string;
+}
+
 export interface PriceIntelligenceData {
   productId?: string;
   resolvedUrl?: string;

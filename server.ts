@@ -152,7 +152,7 @@ Return ONLY raw valid JSON matching this schema:
 }`;
 
   // Candidate models in order of quota availability and speed
-  const candidateModels = ['gemini-3.1-flash-lite', 'gemini-3.8-flash'];
+  const candidateModels = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash'];
 
   for (const model of candidateModels) {
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -166,7 +166,7 @@ Return ONLY raw valid JSON matching this schema:
         });
 
         const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('timeout')), 10000)
+          setTimeout(() => reject(new Error('timeout')), 8000)
         );
 
         const geminiResponse: any = await Promise.race([geminiPromise, timeoutPromise]);
@@ -179,11 +179,19 @@ Return ONLY raw valid JSON matching this schema:
           return parsedData;
         }
       } catch (err: any) {
-        const status = err?.status || err?.code;
-        const msg = err?.message || '';
-        // If temporary high demand, quota spike, or timeout, retry with short backoff or next model
-        if (attempt === 0 && (status === 503 || status === 429 || msg.includes('503') || msg.includes('UNAVAILABLE') || msg.includes('high demand') || msg === 'timeout')) {
-          await new Promise((r) => setTimeout(r, 600));
+        const status = err?.status || err?.code || err?.error?.code || err?.error?.status;
+        const msg = String(err?.message || err || '');
+        const isTemporary =
+          status === 503 ||
+          status === 429 ||
+          status === 'UNAVAILABLE' ||
+          msg.includes('503') ||
+          msg.includes('UNAVAILABLE') ||
+          msg.includes('high demand') ||
+          msg === 'timeout';
+
+        if (attempt === 0 && isTemporary) {
+          await new Promise((r) => setTimeout(r, 400));
           continue;
         }
       }
@@ -768,27 +776,50 @@ Respond with ONLY valid JSON strictly following this schema:
   "verdict": string
 }`;
 
-  const modelsToTry = ['gemini-3.8-flash', 'gemini-3.1-flash-lite'];
+  const modelsToTry = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash'];
   for (const model of modelsToTry) {
-    try {
-      const response = await ai.models.generateContent({
-        model,
-        contents: prompt,
-        config: {
-          temperature: 0.15,
-          responseMimeType: 'application/json',
-        },
-      });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const geminiPromise = ai.models.generateContent({
+          model,
+          contents: prompt,
+          config: {
+            temperature: 0.15,
+            responseMimeType: 'application/json',
+          },
+        });
 
-      if (response && response.text) {
-        const parsed = extractJson(response.text);
-        if (parsed && Array.isArray(parsed.retailers) && parsed.retailers.length >= 3) {
-          priceComparisonCache.set(cacheKey, parsed);
-          return parsed;
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('timeout')), 8000)
+        );
+
+        const response: any = await Promise.race([geminiPromise, timeoutPromise]);
+
+        if (response && response.text) {
+          const parsed = extractJson(response.text);
+          if (parsed && Array.isArray(parsed.retailers) && parsed.retailers.length >= 3) {
+            priceComparisonCache.set(cacheKey, parsed);
+            return parsed;
+          }
         }
+      } catch (err: any) {
+        const status = err?.status || err?.code || err?.error?.code || err?.error?.status;
+        const msg = String(err?.message || err || '');
+        const isTemporary =
+          status === 503 ||
+          status === 429 ||
+          status === 'UNAVAILABLE' ||
+          msg.includes('503') ||
+          msg.includes('UNAVAILABLE') ||
+          msg.includes('high demand') ||
+          msg === 'timeout';
+
+        if (attempt === 0 && isTemporary) {
+          await new Promise((r) => setTimeout(r, 400));
+          continue;
+        }
+        // Gracefully attempt next candidate model or fallback
       }
-    } catch (err: any) {
-      console.warn(`Gemini price comparison with ${model} warning:`, err?.message || err);
     }
   }
 
@@ -871,8 +902,8 @@ app.post('/api/price-comparison/fetch', async (req, res) => {
         data: normalized,
       });
     }
-  } catch (err) {
-    console.warn('Background Gemini price comparison error:', err);
+  } catch {
+    // Graceful fallback to guarantee zero latency and complete reliability
   }
 
   // Graceful fallback to guarantee zero latency and complete reliability

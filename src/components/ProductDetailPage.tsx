@@ -27,7 +27,6 @@ import {
 import { Product, PriceSnapshot, UserProfile } from '../types';
 import { PriceHistoryChart } from './PriceHistoryChart';
 import { PriceUpdateModal } from './PriceUpdateModal';
-import { RealTimePriceComparison } from './RealTimePriceComparison';
 import { database as db, formatPriceDisplay, parsePriceToNumber } from '../lib/firebase';
 
 interface ProductDetailPageProps {
@@ -633,19 +632,10 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
                 </ul>
               </div>
 
-              {/* Jump to Live Comparison Link */}
-              <a
-                href="#live-price-comparison-section"
-                className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:underline pt-2 cursor-pointer"
-              >
-                <span>⚡ Live Multi-Retailer Price Comparison</span>
-                <ExternalLink className="w-3.5 h-3.5" />
-              </a>
-
               {/* Jump to Chart Link */}
               <a
                 href="#price-history-section"
-                className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#FF6E40] hover:underline pt-1 cursor-pointer"
+                className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#FF6E40] hover:underline pt-2 cursor-pointer"
               >
                 <span>View complete interactive price history chart below</span>
                 <TrendingDown className="w-3.5 h-3.5" />
@@ -653,22 +643,6 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
             </div>
           </div>
         </div>
-
-        {/* SECTION: Real-Time Multi-Retailer Price Comparison (Gemini Background Intelligence) */}
-        <RealTimePriceComparison
-          product={product}
-          onAffiliateClick={(e, prod, customUrl, retailerName) => {
-            if (customUrl) {
-              onAffiliateClick(e, {
-                ...prod,
-                store: retailerName || prod.store,
-                affiliateUrl: customUrl,
-              });
-            } else {
-              onAffiliateClick(e, prod);
-            }
-          }}
-        />
 
         {/* SCROLL-DOWN SECTION: Price History Chart */}
         <section

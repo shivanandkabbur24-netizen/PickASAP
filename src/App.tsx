@@ -209,7 +209,8 @@ export default function App() {
     const monthClicks = getMonthlyClicksForUser(
       userProducts,
       clicks,
-      currentMonthKey
+      currentMonthKey,
+      user
     );
     const tier = getRevenueTier(monthClicks);
     const feePaid = isPlatformFeePaidForMonth(user, currentMonthKey);
@@ -430,7 +431,8 @@ export default function App() {
               (p) => p.uploaderId === user.id || user.role === 'admin' || !p.uploaderId
             ),
             clicks,
-            getCurrentMonthKey()
+            getCurrentMonthKey(),
+            user
           )}
           onPaymentSuccess={() => {
             setIsPlatformFeeOpen(false);

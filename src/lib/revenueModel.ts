@@ -118,8 +118,12 @@ export function getAvailableMonthKeys(): string[] {
 export function getMonthlyClicksForUser(
   myProducts: Product[],
   clickRecords: ClickRecord[],
-  monthKey: string
+  monthKey: string,
+  user?: UserProfile | null
 ): number {
+  if (user?.simulatedClicks !== undefined && user.simulatedClicks !== null && user.simulatedClicks > 0) {
+    return user.simulatedClicks;
+  }
   const myProductIds = new Set(myProducts.map((p) => p.id));
   return clickRecords.filter(
     (c) => myProductIds.has(c.productId) && (c.timestamp || '').startsWith(monthKey)

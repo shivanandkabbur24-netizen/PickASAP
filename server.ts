@@ -1,6 +1,10 @@
+import dotenv from 'dotenv';
+dotenv.config({ override: true });
 import express from 'express';
 import path from 'path';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
+import Razorpay from 'razorpay';
 import { GoogleGenAI } from '@google/genai';
 import { createServer as createViteServer } from 'vite';
 
@@ -96,7 +100,7 @@ function extractJson(text: string): any {
   return null;
 }
 
-// Resilient Gemini Price Intelligence Fetcher with multi-model fallback and graceful recovery
+// Resilient Price Intelligence Fetcher (falls back instantly to deterministic category price tracker to avoid 503 high-demand spikes)
 async function fetchPriceIntelligenceFromGemini(
   querySubject: string,
   resolvedUrl: string,
@@ -108,95 +112,7 @@ async function fetchPriceIntelligenceFromGemini(
   if (priceIntelligenceCache.has(cacheKey)) {
     return priceIntelligenceCache.get(cacheKey);
   }
-
-  let ai: GoogleGenAI;
-  try {
-    ai = getGemini();
-  } catch {
-    return null;
-  }
-
-  const prompt = `You are an expert e-commerce price history analyst for Indian online retail platforms (Flipkart, Amazon.in, BuyHatke, PriceBefore, Keepa).
-Analyze the realistic and historical market price trajectory for this product:
-- Product: "${querySubject}"
-- Store: "${store || 'Flipkart / Amazon'}"
-- Current Price: ₹${currentPriceNum > 0 ? currentPriceNum : 'Listed price'}
-- Product URL: "${resolvedUrl || effectiveUrl}"
-
-Perform an authentic, product-specific price history analysis based on market trends and price tracker data (like BuyHatke):
-1. Identify the product's actual category (e.g. Flagship Smartphone, Smart TV, Kitchen Appliance, Audio, etc.) and realistic launch MRP (highest price).
-2. The landmark all-time lowest promotional deal price ever recorded during major Indian sale festivals (e.g. Flipkart Big Billion Days, Amazon Great Indian Festival, Republic Day Sale, Prime Day).
-3. The average historical selling price.
-4. 4 to 6 chronological milestones spanning the last 6 to 18 months with realistic dates (YYYY-MM-DD), prices (in INR integer), drop percentages, and notes describing the specific sale event or reason for the price point (e.g., Launch MRP, Summer festival discount, Big Billion Days sale drop, Bank offer discount, Current verified listing).
-5. A concise summary note (1-2 sentences) evaluating whether the current price is a good deal compared to historical BuyHatke/tracker records.
-
-IMPORTANT: Tailor all prices, drop percentages, and dates specifically to this product's actual market category and price tier.
-Return ONLY raw valid JSON matching this schema:
-{
-  "productTitle": "${querySubject}",
-  "currentPrice": ${currentPriceNum || 4999},
-  "lowestPrice": number,
-  "highestPrice": number,
-  "averagePrice": number,
-  "currency": "₹",
-  "summaryNote": string,
-  "milestones": [
-    {
-      "date": "YYYY-MM-DD",
-      "price": number,
-      "note": string,
-      "dropPercentage": string
-    }
-  ]
-}`;
-
-  // Candidate models in order of quota availability and speed
-  const candidateModels = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash'];
-
-  for (const model of candidateModels) {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        const geminiPromise = ai.models.generateContent({
-          model,
-          contents: prompt,
-          config: {
-            responseMimeType: 'application/json',
-          },
-        });
-
-        const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('timeout')), 8000)
-        );
-
-        const geminiResponse: any = await Promise.race([geminiPromise, timeoutPromise]);
-        const rawText = geminiResponse?.text?.trim() || '';
-
-        const parsedData = extractJson(rawText);
-
-        if (parsedData && (parsedData.currentPrice || parsedData.lowestPrice || (Array.isArray(parsedData.milestones) && parsedData.milestones.length > 0))) {
-          priceIntelligenceCache.set(cacheKey, parsedData);
-          return parsedData;
-        }
-      } catch (err: any) {
-        const status = err?.status || err?.code || err?.error?.code || err?.error?.status;
-        const msg = String(err?.message || err || '');
-        const isTemporary =
-          status === 503 ||
-          status === 429 ||
-          status === 'UNAVAILABLE' ||
-          msg.includes('503') ||
-          msg.includes('UNAVAILABLE') ||
-          msg.includes('high demand') ||
-          msg === 'timeout';
-
-        if (attempt === 0 && isTemporary) {
-          await new Promise((r) => setTimeout(r, 400));
-          continue;
-        }
-      }
-    }
-  }
-
+  // Instantly return null so server uses deterministic offline price history engine without 503 spikes
   return null;
 }
 
@@ -501,6 +417,250 @@ app.post('/api/price-history/fetch', async (req, res) => {
     },
   });
 });
+
+// -------------------------------------------------------------
+// RAZORPAY PAYMENT GATEWAY ENDPOINTS (STANDARD WEB CHECKOUT)
+// -------------------------------------------------------------
+
+// Lazy initialization of Razorpay SDK
+let razorpayClient: Razorpay | null = null;
+function getRazorpay(): Razorpay {
+  const key_id = (process.env.RAZORPAY_KEY_ID || '').trim();
+  const key_secret = (process.env.RAZORPAY_KEY_SECRET || '').trim();
+  if (!key_id || !key_secret) {
+    throw new Error('RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET must be configured');
+  }
+  if (!razorpayClient) {
+    razorpayClient = new Razorpay({
+      key_id,
+      key_secret,
+    });
+  }
+  return razorpayClient;
+}
+
+// 1. Get Razorpay configuration status (Public Key ID)
+app.get(['/api/razorpay/config', '/api/config'], (req, res) => {
+  const keyId = (process.env.RAZORPAY_KEY_ID || '').trim();
+  const hasSecret = Boolean((process.env.RAZORPAY_KEY_SECRET || '').trim());
+  const isConfigured = Boolean(keyId && hasSecret);
+
+  return res.json({
+    success: true,
+    isConfigured,
+    keyId: keyId || 'rzp_test_placeholder',
+    currency: 'INR',
+  });
+});
+
+// 2. Create Razorpay Order
+// Minimum amount: 100 paise (₹1)
+// Request: { amount (in paise), currency, receipt }
+// Return: { order_id, amount, currency, keyId }
+const handleCreateOrder = async (req: express.Request, res: express.Response) => {
+  try {
+    const { amount, currency = 'INR', receipt, notes, monthKey, userId, userEmail, tierId, tierName } = req.body;
+    let numericAmount = Number(amount);
+
+    if (isNaN(numericAmount) || numericAmount <= 0) {
+      return res.status(400).json({ error: 'Valid payment amount is required' });
+    }
+
+    // Minimum amount check: 100 paise
+    if (numericAmount < 100) {
+      return res.status(400).json({ error: 'Minimum amount must be at least 100 paise (₹1)' });
+    }
+
+    const keyId = (process.env.RAZORPAY_KEY_ID || '').trim();
+    const keySecret = (process.env.RAZORPAY_KEY_SECRET || '').trim();
+
+    if (!keyId || !keySecret) {
+      return res.status(401).json({
+        error: 'Razorpay API credentials not configured in environment',
+      });
+    }
+
+    const amountInPaise = Math.round(numericAmount);
+    const orderReceipt = receipt || `rcpt_${String(userId || 'creator').replace(/[^a-zA-Z0-9]/g, '').slice(-8)}_${Date.now()}`.slice(0, 40);
+
+    const orderNotes = {
+      platform: 'PickASAP Creator Platform Fee',
+      monthKey: String(monthKey || ''),
+      userId: String(userId || ''),
+      userEmail: String(userEmail || ''),
+      tierId: String(tierId || ''),
+      tierName: String(tierName || ''),
+      ...(typeof notes === 'object' && notes ? notes : {}),
+    };
+
+    try {
+      const razorpay = getRazorpay();
+      const order = await razorpay.orders.create({
+        amount: amountInPaise,
+        currency: currency || 'INR',
+        receipt: orderReceipt,
+        notes: orderNotes,
+      });
+
+      return res.json({
+        success: true,
+        order_id: order.id,
+        orderId: order.id,
+        id: order.id,
+        amount: order.amount,
+        currency: order.currency,
+        keyId,
+        key_id: keyId,
+      });
+    } catch (sdkError: any) {
+      console.error('Razorpay SDK error creating order, retrying via REST:', sdkError);
+
+      // REST fallback
+      const authHeader = 'Basic ' + Buffer.from(`${keyId}:${keySecret}`).toString('base64');
+      const razorpayRes = await fetch('https://api.razorpay.com/v1/orders', {
+        method: 'POST',
+        headers: {
+          'Authorization': authHeader,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          amount: amountInPaise,
+          currency: currency || 'INR',
+          receipt: orderReceipt,
+          notes: orderNotes,
+        }),
+      });
+
+      if (razorpayRes.status === 401) {
+        return res.status(401).json({
+          error: 'Razorpay authentication failed. Invalid API credentials.',
+        });
+      }
+
+      if (!razorpayRes.ok) {
+        const errData = await razorpayRes.text();
+        console.error('Razorpay REST error creating order:', errData);
+        return res.status(500).json({
+          error: 'Razorpay API error creating order',
+          details: errData,
+        });
+      }
+
+      const orderData = (await razorpayRes.json()) as any;
+      return res.json({
+        success: true,
+        order_id: orderData.id,
+        orderId: orderData.id,
+        id: orderData.id,
+        amount: orderData.amount,
+        currency: orderData.currency,
+        keyId,
+        key_id: keyId,
+      });
+    }
+  } catch (error: any) {
+    console.error('Error creating Razorpay order:', error);
+    return res.status(500).json({
+      error: 'Failed to create payment order',
+      message: error?.message,
+    });
+  }
+};
+
+app.post('/api/create-order', handleCreateOrder);
+app.post('/api/razorpay/create-order', handleCreateOrder);
+
+// 3. Verify Razorpay Payment Signature
+// Endpoint: POST /api/verify-payment
+// Algorithm: HMAC-SHA256(order_id + "|" + payment_id, KEY_SECRET)
+// Compare generated signature with razorpay_signature
+// Return success only if signatures match
+const handleVerifyPayment = async (req: express.Request, res: express.Response) => {
+  try {
+    const {
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
+      order_id,
+      payment_id,
+      signature,
+      monthKey,
+      userId,
+      amount,
+    } = req.body;
+
+    const orderId = razorpay_order_id || order_id;
+    const paymentId = razorpay_payment_id || payment_id;
+    const receivedSignature = razorpay_signature || signature;
+
+    // Validate required fields
+    if (!orderId || !paymentId || !receivedSignature) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required payment verification fields: order_id, payment_id, and signature are all required',
+      });
+    }
+
+    const keySecret = (process.env.RAZORPAY_KEY_SECRET || '').trim();
+    if (!keySecret) {
+      return res.status(500).json({
+        success: false,
+        error: 'RAZORPAY_KEY_SECRET is not configured on server',
+      });
+    }
+
+    // Generate HMAC-SHA256 signature
+    const hmac = crypto.createHmac('sha256', keySecret);
+    hmac.update(`${orderId}|${paymentId}`);
+    const generatedSignature = hmac.digest('hex');
+
+    // Compare signatures securely
+    let isMatch = false;
+    try {
+      isMatch = crypto.timingSafeEqual(
+        Buffer.from(generatedSignature, 'utf-8'),
+        Buffer.from(receivedSignature, 'utf-8')
+      );
+    } catch {
+      isMatch = generatedSignature === receivedSignature;
+    }
+
+    if (!isMatch) {
+      console.warn('Razorpay signature mismatch:', {
+        orderId,
+        paymentId,
+        generatedSignature,
+        receivedSignature,
+      });
+      return res.status(400).json({
+        success: false,
+        error: 'Signature verification failed. Invalid payment signature.',
+      });
+    }
+
+    return res.json({
+      success: true,
+      verified: true,
+      paymentId,
+      orderId,
+      monthKey: monthKey || '',
+      userId: userId || '',
+      amount: amount || 0,
+      timestamp: new Date().toISOString(),
+      message: 'Payment verified successfully',
+    });
+  } catch (error: any) {
+    console.error('Error verifying payment signature:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Internal server error while verifying payment',
+      message: error?.message,
+    });
+  }
+};
+
+app.post('/api/verify-payment', handleVerifyPayment);
+app.post('/api/razorpay/verify-payment', handleVerifyPayment);
 
 // -------------------------------------------------------------
 // VITE MIDDLEWARE / PRODUCTION STATIC SERVING

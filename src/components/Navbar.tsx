@@ -1,11 +1,11 @@
 import React from 'react';
 import { Plus, Sun, Moon, LogOut, LayoutDashboard, BookOpen, User } from 'lucide-react';
 import { PickAsapLogo } from './PickAsapLogo';
-import { UserProfile } from '../types';
+import { UserProfile, AppView } from '../types';
 
 interface NavbarProps {
-  currentView: 'magazine' | 'dashboard' | 'login';
-  setCurrentView: (view: 'magazine' | 'dashboard' | 'login') => void;
+  currentView: AppView;
+  setCurrentView: (view: AppView) => void;
   user: UserProfile | null;
   onLogout: () => void;
   onOpenUploadModal: () => void;
@@ -41,6 +41,18 @@ export const Navbar: React.FC<NavbarProps> = ({
 
         {/* Center / Right Links */}
         <nav className="hidden md:flex items-center gap-7 text-xs font-medium uppercase tracking-widest text-neutral-600 dark:text-neutral-300">
+          <button
+            id="nav-magazine-link"
+            onClick={() => setCurrentView('magazine')}
+            className={`flex items-center gap-1.5 transition-colors hover:text-black dark:hover:text-white cursor-pointer ${
+              currentView === 'magazine'
+                ? 'text-black dark:text-white font-bold border-b border-black dark:border-white pb-0.5'
+                : ''
+            }`}
+          >
+            <span>Magazine</span>
+          </button>
+
           {user && (
             <button
               id="nav-dashboard-link"
@@ -48,14 +60,26 @@ export const Navbar: React.FC<NavbarProps> = ({
               className={`flex items-center gap-1.5 transition-colors hover:text-black dark:hover:text-white cursor-pointer ${
                 currentView === 'dashboard'
                   ? 'text-black dark:text-white font-bold border-b border-black dark:border-white pb-0.5'
-                  : ''
-              }`}
-            >
-              <LayoutDashboard className="w-3.5 h-3.5" />
-              <span>Dashboard</span>
-            </button>
-          )}
-        </nav>
+                : ''
+            }`}
+          >
+            <LayoutDashboard className="w-3.5 h-3.5" />
+            <span>Dashboard</span>
+          </button>
+        )}
+
+        <button
+          id="nav-contact-link"
+          onClick={() => setCurrentView('contact')}
+          className={`flex items-center gap-1.5 transition-colors hover:text-black dark:hover:text-white cursor-pointer ${
+            currentView === 'contact'
+              ? 'text-black dark:text-white font-bold border-b border-black dark:border-white pb-0.5'
+              : ''
+          }`}
+        >
+          <span>Contact</span>
+        </button>
+      </nav>
 
         {/* Right Section: Theme Toggle & The Requested Dynamic Upload Button / "+" Icon */}
         <div className="flex items-center gap-2 sm:gap-3 shrink-0">

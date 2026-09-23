@@ -471,6 +471,15 @@ export const PlatformFeeModal: React.FC<PlatformFeeModalProps> = ({
                   )}
                 </button>
               </div>
+
+              <div className="pt-3 text-center text-[10px] text-neutral-400 dark:text-neutral-500">
+                <span>By continuing, you agree to PickASAP&apos;s </span>
+                <a href="/?page=terms" target="_blank" rel="noreferrer" className="underline hover:text-neutral-700 dark:hover:text-neutral-300">Terms</a>
+                <span>, </span>
+                <a href="/?page=privacy" target="_blank" rel="noreferrer" className="underline hover:text-neutral-700 dark:hover:text-neutral-300">Privacy</a>
+                <span> &amp; </span>
+                <a href="/?page=cancellation-refund" target="_blank" rel="noreferrer" className="underline hover:text-neutral-700 dark:hover:text-neutral-300">Refund Policy</a>
+              </div>
             </div>
           )}
         </div>

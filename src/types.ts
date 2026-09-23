@@ -174,6 +174,16 @@ export interface UserProfile {
   simulatedClicks?: number | null; // For testing and verifying tier limits
 }
 
+export type AppView =
+  | 'magazine'
+  | 'dashboard'
+  | 'login'
+  | 'terms'
+  | 'privacy'
+  | 'cancellation-refund'
+  | 'shipping-exchange'
+  | 'contact';
+
 export type CategoryType = 
   | 'All'
   | 'Tech & Audio'

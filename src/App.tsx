@@ -13,7 +13,12 @@ import { AdminPriceUpdateModal } from './components/AdminPriceUpdateModal';
 import { PlatformFeeModal } from './components/PlatformFeeModal';
 import { ProductDetailPage } from './components/ProductDetailPage';
 import { AffiliatePartnerProfile } from './components/AffiliatePartnerProfile';
-import { Product, UserProfile, StoreType, SortOption, CategoryType, ClickRecord } from './types';
+import { TermsPage } from './components/legal/TermsPage';
+import { PrivacyPolicyPage } from './components/legal/PrivacyPolicyPage';
+import { CancellationRefundPage } from './components/legal/CancellationRefundPage';
+import { ShippingExchangePage } from './components/legal/ShippingExchangePage';
+import { ContactUsPage } from './components/legal/ContactUsPage';
+import { Product, UserProfile, StoreType, SortOption, CategoryType, ClickRecord, AppView } from './types';
 import { database as db } from './lib/firebase';
 import {
   getCurrentMonthKey,
@@ -21,11 +26,32 @@ import {
   getRevenueTier,
   isPlatformFeePaidForMonth,
 } from './lib/revenueModel';
-import { ShoppingBag, ShieldCheck, Sparkles, Tag, ExternalLink, TrendingUp } from 'lucide-react';
+import { ShoppingBag, ShieldCheck, Sparkles, Tag, ExternalLink, TrendingUp, FileText, Scale, RotateCcw, Truck, Mail } from 'lucide-react';
 
 export default function App() {
-  // State management
-  const [currentView, setCurrentView] = useState<'magazine' | 'dashboard' | 'login'>('magazine');
+  // State management with URL deep linking (?page=terms, ?page=privacy, ?page=cancellation-refund, etc.)
+  const [currentView, setCurrentView] = useState<AppView>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const page = params.get('page');
+      if (page === 'terms' || page === 'terms-and-conditions') return 'terms';
+      if (page === 'privacy' || page === 'privacy-policy') return 'privacy';
+      if (page === 'refunds' || page === 'cancellation-refund' || page === 'refund-policy') return 'cancellation-refund';
+      if (page === 'shipping' || page === 'shipping-exchange' || page === 'shipping-policy') return 'shipping-exchange';
+      if (page === 'contact' || page === 'contact-us') return 'contact';
+      if (page === 'dashboard') return 'dashboard';
+      if (page === 'login') return 'login';
+
+      const path = window.location.pathname.replace(/^\/+|\/+$/g, '').toLowerCase();
+      if (path === 'terms' || path === 'terms-and-conditions') return 'terms';
+      if (path === 'privacy' || path === 'privacy-policy') return 'privacy';
+      if (path === 'cancellation-refund' || path === 'refunds') return 'cancellation-refund';
+      if (path === 'shipping-exchange' || path === 'shipping') return 'shipping-exchange';
+      if (path === 'contact' || path === 'contact-us') return 'contact';
+      if (path === 'dashboard') return 'dashboard';
+    }
+    return 'magazine';
+  });
   const [user, setUser] = useState<UserProfile | null>(() => db.getCurrentUser());
   // Synchronous cache retrieval ensures user-uploaded products render in 0ms on initial frame
   const [products, setProducts] = useState<Product[]>(() => db.getStoredProducts());
@@ -255,10 +281,41 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  // Navigation handler with URL sync (?page=<view>)
+  const handleNavigate = (view: AppView) => {
+    setCurrentView(view);
+    setSelectedProduct(null);
+    setSelectedPartner(null);
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('product');
+      url.searchParams.delete('partner');
+      url.searchParams.delete('partnerName');
+      if (view === 'magazine') {
+        url.searchParams.delete('page');
+      } else {
+        url.searchParams.set('page', view);
+      }
+      window.history.pushState({}, '', url.toString());
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   // Popstate listener to handle browser Back / Forward buttons
   useEffect(() => {
     const handlePopState = () => {
       const params = new URLSearchParams(window.location.search);
+      const page = params.get('page');
+      if (
+        page &&
+        ['terms', 'privacy', 'cancellation-refund', 'shipping-exchange', 'contact', 'dashboard', 'login'].includes(page)
+      ) {
+        setCurrentView(page as AppView);
+        setSelectedProduct(null);
+        setSelectedPartner(null);
+        return;
+      }
+
       const prodId = params.get('product');
       if (prodId) {
         const found = products.find((p) => p.id === prodId);
@@ -275,6 +332,10 @@ export default function App() {
         setSelectedPartner({ id: partnerId || '', name: partnerName || 'Affiliate Partner' });
       } else {
         setSelectedPartner(null);
+      }
+
+      if (!page && !prodId && !partnerId && !partnerName) {
+        setCurrentView('magazine');
       }
     };
 
@@ -315,11 +376,7 @@ export default function App() {
       {/* Sticky Top Navbar */}
       <Navbar
         currentView={currentView}
-        setCurrentView={(view) => {
-          setCurrentView(view);
-          handleSelectProduct(null);
-          handleSelectPartner(null);
-        }}
+        setCurrentView={handleNavigate}
         user={user}
         onLogout={handleLogout}
         onOpenUploadModal={handleAttemptUpload}
@@ -373,6 +430,16 @@ export default function App() {
             onToggleFavorite={handleToggleFavorite}
             onAffiliateClick={handleAffiliateClick}
           />
+        ) : currentView === 'terms' ? (
+          <TermsPage currentView={currentView} setCurrentView={handleNavigate} />
+        ) : currentView === 'privacy' ? (
+          <PrivacyPolicyPage currentView={currentView} setCurrentView={handleNavigate} />
+        ) : currentView === 'cancellation-refund' ? (
+          <CancellationRefundPage currentView={currentView} setCurrentView={handleNavigate} />
+        ) : currentView === 'shipping-exchange' ? (
+          <ShippingExchangePage currentView={currentView} setCurrentView={handleNavigate} />
+        ) : currentView === 'contact' ? (
+          <ContactUsPage currentView={currentView} setCurrentView={handleNavigate} />
         ) : currentView === 'dashboard' && user ? (
           <DashboardView
             user={user}
@@ -380,9 +447,7 @@ export default function App() {
             onOpenUploadModal={() => setIsUploadOpen(true)}
             onDeleteProduct={handleDeleteProduct}
             onSwitchToMagazine={() => {
-              setCurrentView('magazine');
-              handleSelectProduct(null);
-              handleSelectPartner(null);
+              handleNavigate('magazine');
             }}
             onProductUpdated={(updated) => {
               setProducts((prev) =>
@@ -469,8 +534,8 @@ export default function App() {
       {/* Editorial & SEO Rich Footer */}
       <footer className="mt-auto border-t border-neutral-200/80 dark:border-neutral-800/80 pt-16 pb-12 px-6 bg-neutral-50/80 dark:bg-[#08080a] text-neutral-600 dark:text-neutral-400">
         <div className="max-w-7xl mx-auto space-y-12">
-          {/* Main 4-Column SEO Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-10">
+          {/* Main 5-Column SEO & Policy Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-8">
             {/* Column 1: PickASAP Identity & Overview */}
             <div className="space-y-4">
               <div className="flex items-center gap-2">
@@ -500,7 +565,7 @@ export default function App() {
                   <button
                     id="footer-flipkart-link"
                     onClick={() => {
-                      if (currentView !== 'magazine') setCurrentView('magazine');
+                      if (currentView !== 'magazine') handleNavigate('magazine');
                       window.dispatchEvent(new CustomEvent('pickasap:filter', { detail: { store: 'Flipkart' } }));
                     }}
                     className="hover:text-blue-600 dark:hover:text-blue-400 flex items-center gap-2 transition-colors cursor-pointer text-left"
@@ -513,7 +578,7 @@ export default function App() {
                   <button
                     id="footer-amazon-link"
                     onClick={() => {
-                      if (currentView !== 'magazine') setCurrentView('magazine');
+                      if (currentView !== 'magazine') handleNavigate('magazine');
                       window.dispatchEvent(new CustomEvent('pickasap:filter', { detail: { store: 'Amazon' } }));
                     }}
                     className="hover:text-amber-600 dark:hover:text-amber-400 flex items-center gap-2 transition-colors cursor-pointer text-left"
@@ -526,7 +591,7 @@ export default function App() {
                   <button
                     id="footer-myntra-link"
                     onClick={() => {
-                      if (currentView !== 'magazine') setCurrentView('magazine');
+                      if (currentView !== 'magazine') handleNavigate('magazine');
                       window.dispatchEvent(new CustomEvent('pickasap:filter', { detail: { store: 'Myntra' } }));
                     }}
                     className="hover:text-pink-600 dark:hover:text-pink-400 flex items-center gap-2 transition-colors cursor-pointer text-left"
@@ -539,7 +604,7 @@ export default function App() {
                   <button
                     id="footer-all-stores-link"
                     onClick={() => {
-                      if (currentView !== 'magazine') setCurrentView('magazine');
+                      if (currentView !== 'magazine') handleNavigate('magazine');
                       window.dispatchEvent(new CustomEvent('pickasap:filter', { detail: { store: 'All' } }));
                     }}
                     className="hover:text-neutral-900 dark:hover:text-white flex items-center gap-2 transition-colors cursor-pointer text-left"
@@ -551,17 +616,17 @@ export default function App() {
               </ul>
             </div>
 
-            {/* Column 3: Curated Deal Categories */}
+            {/* Column 3: Curated Categories */}
             <div className="space-y-3">
               <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-900 dark:text-white">
-                Curated Value Discoveries
+                Curated Categories
               </h3>
               <ul className="space-y-2 text-xs">
                 <li>
                   <button
                     id="footer-best-deals-link"
                     onClick={() => {
-                      if (currentView !== 'magazine') setCurrentView('magazine');
+                      if (currentView !== 'magazine') handleNavigate('magazine');
                       window.dispatchEvent(new CustomEvent('pickasap:filter', { detail: { sort: 'best' } }));
                     }}
                     className="hover:text-red-600 dark:hover:text-red-400 flex items-center gap-1.5 transition-colors cursor-pointer text-left font-medium"
@@ -574,33 +639,33 @@ export default function App() {
                   <button
                     id="footer-low-cost-link"
                     onClick={() => {
-                      if (currentView !== 'magazine') setCurrentView('magazine');
+                      if (currentView !== 'magazine') handleNavigate('magazine');
                       window.dispatchEvent(new CustomEvent('pickasap:filter', { detail: { sort: 'price_low' } }));
                     }}
                     className="hover:text-emerald-600 dark:hover:text-emerald-400 flex items-center gap-1.5 transition-colors cursor-pointer text-left"
                   >
                     <Tag className="w-3 h-3 text-emerald-500" />
-                    <span>Low Cost Products &amp; Budget Deals</span>
+                    <span>Low Cost Products</span>
                   </button>
                 </li>
                 <li>
                   <button
                     id="footer-quality-picks-link"
                     onClick={() => {
-                      if (currentView !== 'magazine') setCurrentView('magazine');
+                      if (currentView !== 'magazine') handleNavigate('magazine');
                       window.dispatchEvent(new CustomEvent('pickasap:filter', { detail: { sort: 'most_clicked' } }));
                     }}
                     className="hover:text-purple-600 dark:hover:text-purple-400 flex items-center gap-1.5 transition-colors cursor-pointer text-left"
                   >
                     <Sparkles className="w-3 h-3 text-purple-500" />
-                    <span>Good Quality &amp; Highly Rated Products</span>
+                    <span>Quality Picks &amp; Highly Rated</span>
                   </button>
                 </li>
                 <li>
                   <button
                     id="footer-tech-link"
                     onClick={() => {
-                      if (currentView !== 'magazine') setCurrentView('magazine');
+                      if (currentView !== 'magazine') handleNavigate('magazine');
                       window.dispatchEvent(new CustomEvent('pickasap:filter', { detail: { category: 'Tech & Audio' } }));
                     }}
                     className="hover:text-neutral-900 dark:hover:text-white transition-colors cursor-pointer text-left"
@@ -608,75 +673,165 @@ export default function App() {
                     Tech &amp; Audio Innovations
                   </button>
                 </li>
+              </ul>
+            </div>
+
+            {/* Column 4: Legal & Policies */}
+            <div className="space-y-3">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-900 dark:text-white">
+                Policies &amp; Support
+              </h3>
+              <ul className="space-y-2 text-xs">
                 <li>
                   <button
-                    id="footer-fashion-link"
-                    onClick={() => {
-                      if (currentView !== 'magazine') setCurrentView('magazine');
-                      window.dispatchEvent(new CustomEvent('pickasap:filter', { detail: { category: 'Fashion & Apparel' } }));
-                    }}
-                    className="hover:text-neutral-900 dark:hover:text-white transition-colors cursor-pointer text-left"
+                    id="footer-terms-link"
+                    onClick={() => handleNavigate('terms')}
+                    className={`flex items-center gap-1.5 transition-colors cursor-pointer text-left ${
+                      currentView === 'terms'
+                        ? 'text-[#FF6E40] font-semibold'
+                        : 'hover:text-neutral-900 dark:hover:text-white'
+                    }`}
                   >
-                    Fashion &amp; Seasonal Wardrobe
+                    <FileText className="w-3 h-3 text-neutral-400" />
+                    <span>Terms and Conditions</span>
                   </button>
                 </li>
                 <li>
                   <button
-                    id="footer-home-link"
-                    onClick={() => {
-                      if (currentView !== 'magazine') setCurrentView('magazine');
-                      window.dispatchEvent(new CustomEvent('pickasap:filter', { detail: { category: 'Home & Design' } }));
-                    }}
-                    className="hover:text-neutral-900 dark:hover:text-white transition-colors cursor-pointer text-left"
+                    id="footer-privacy-link"
+                    onClick={() => handleNavigate('privacy')}
+                    className={`flex items-center gap-1.5 transition-colors cursor-pointer text-left ${
+                      currentView === 'privacy'
+                        ? 'text-[#FF6E40] font-semibold'
+                        : 'hover:text-neutral-900 dark:hover:text-white'
+                    }`}
                   >
-                    Home, Living &amp; Interior Design
+                    <ShieldCheck className="w-3 h-3 text-neutral-400" />
+                    <span>Privacy Policy</span>
+                  </button>
+                </li>
+                <li>
+                  <button
+                    id="footer-refund-link"
+                    onClick={() => handleNavigate('cancellation-refund')}
+                    className={`flex items-center gap-1.5 transition-colors cursor-pointer text-left ${
+                      currentView === 'cancellation-refund'
+                        ? 'text-[#FF6E40] font-semibold'
+                        : 'hover:text-neutral-900 dark:hover:text-white'
+                    }`}
+                  >
+                    <RotateCcw className="w-3 h-3 text-neutral-400" />
+                    <span>Cancellation and Refund</span>
+                  </button>
+                </li>
+                <li>
+                  <button
+                    id="footer-shipping-link"
+                    onClick={() => handleNavigate('shipping-exchange')}
+                    className={`flex items-center gap-1.5 transition-colors cursor-pointer text-left ${
+                      currentView === 'shipping-exchange'
+                        ? 'text-[#FF6E40] font-semibold'
+                        : 'hover:text-neutral-900 dark:hover:text-white'
+                    }`}
+                  >
+                    <Truck className="w-3 h-3 text-neutral-400" />
+                    <span>Shipping and Exchange</span>
+                  </button>
+                </li>
+                <li>
+                  <button
+                    id="footer-contact-link"
+                    onClick={() => handleNavigate('contact')}
+                    className={`flex items-center gap-1.5 transition-colors cursor-pointer text-left font-medium ${
+                      currentView === 'contact'
+                        ? 'text-[#FF6E40] font-bold'
+                        : 'text-[#FF6E40] hover:underline'
+                    }`}
+                  >
+                    <Mail className="w-3 h-3 text-[#FF6E40]" />
+                    <span>Contact Us</span>
                   </button>
                 </li>
               </ul>
             </div>
 
-            {/* Column 4: Affiliate Transparency & Editorial Policy */}
+            {/* Column 5: Affiliate Transparency & Editorial Policy */}
             <div className="space-y-3">
               <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-900 dark:text-white">
-                Affiliate Marketing Disclosure
+                Affiliate Transparency
               </h3>
               <p className="text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
-                PickASAP participates in verified affiliate marketing programs with Flipkart, Amazon, Myntra, and top retailers. When you purchase through our links, we may earn an affiliate commission at zero extra cost to you.
+                PickASAP participates in verified affiliate marketing programs with Flipkart, Amazon, Myntra, and top retailers. We may earn a commission on qualifying purchases at zero added cost to you.
               </p>
               <p className="text-[11px] text-neutral-400 dark:text-neutral-500">
-                Prices and availability are accurate at time of publication and subject to merchant adjustments.
+                Platform fee subscriptions are secured by Razorpay PCI-DSS certified gateway.
               </p>
             </div>
           </div>
 
-          {/* SEO Keyword & Subdomain Directory Bar */}
-          <div className="pt-8 border-t border-neutral-200/60 dark:border-neutral-800/60">
-            <div className="flex flex-col md:flex-row items-center justify-between gap-4 text-xs">
-              <div className="flex flex-wrap items-center justify-center md:justify-start gap-x-3 gap-y-1.5 text-neutral-400 dark:text-neutral-500 text-[11px]">
-                <span className="font-semibold text-neutral-600 dark:text-neutral-300">SEO Directory:</span>
-                <span>PickASAP</span>
-                <span>•</span>
-                <span>pickasap</span>
-                <span>•</span>
-                <span>Affiliate</span>
-                <span>•</span>
-                <span>Flipkart Deals</span>
-                <span>•</span>
-                <span>Amazon Finds</span>
-                <span>•</span>
-                <span>Myntra Fashion</span>
-                <span>•</span>
-                <span>Shopping</span>
-                <span>•</span>
-                <span>Low Cost Products</span>
-                <span>•</span>
-                <span>Good Quality Products</span>
-                <span>•</span>
-                <span>Affiliate Marketing</span>
+          {/* Quick Legal Strip & SEO Keyword Bar */}
+          <div className="pt-8 border-t border-neutral-200/60 dark:border-neutral-800/60 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-4 text-xs">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-neutral-600 dark:text-neutral-400 font-medium">
+                <button
+                  onClick={() => handleNavigate('terms')}
+                  className="hover:text-black dark:hover:text-white transition-colors cursor-pointer"
+                >
+                  Terms and Conditions
+                </button>
+                <span className="text-neutral-300 dark:text-neutral-700">·</span>
+                <button
+                  onClick={() => handleNavigate('privacy')}
+                  className="hover:text-black dark:hover:text-white transition-colors cursor-pointer"
+                >
+                  Privacy Policy
+                </button>
+                <span className="text-neutral-300 dark:text-neutral-700">·</span>
+                <button
+                  onClick={() => handleNavigate('cancellation-refund')}
+                  className="hover:text-black dark:hover:text-white transition-colors cursor-pointer"
+                >
+                  Cancellation and Refund
+                </button>
+                <span className="text-neutral-300 dark:text-neutral-700">·</span>
+                <button
+                  onClick={() => handleNavigate('shipping-exchange')}
+                  className="hover:text-black dark:hover:text-white transition-colors cursor-pointer"
+                >
+                  Shipping and Exchange
+                </button>
+                <span className="text-neutral-300 dark:text-neutral-700">·</span>
+                <button
+                  onClick={() => handleNavigate('contact')}
+                  className="hover:text-[#FF6E40] transition-colors cursor-pointer font-semibold"
+                >
+                  Contact Us
+                </button>
               </div>
+
               <div className="text-neutral-500 dark:text-neutral-400 whitespace-nowrap text-xs">
                 © 2026 PickASAP. All rights reserved.
               </div>
+            </div>
+
+            {/* Subdomain Directory Keywords */}
+            <div className="flex flex-wrap items-center justify-center md:justify-start gap-x-3 gap-y-1 text-neutral-400 dark:text-neutral-500 text-[11px] pt-1">
+              <span className="font-semibold text-neutral-600 dark:text-neutral-300">Directory:</span>
+              <span>PickASAP</span>
+              <span>•</span>
+              <span>Affiliate Marketing Deals</span>
+              <span>•</span>
+              <span>Flipkart Deals</span>
+              <span>•</span>
+              <span>Amazon Finds</span>
+              <span>•</span>
+              <span>Myntra Fashion</span>
+              <span>•</span>
+              <span>Low Cost Products</span>
+              <span>•</span>
+              <span>Good Quality Products</span>
+              <span>•</span>
+              <span>Price Tracker &amp; Drop Alerts</span>
             </div>
           </div>
         </div>

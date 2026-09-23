@@ -4,7 +4,6 @@ import {
   ShieldCheck,
   CheckCircle2,
   Sparkles,
-  Lock,
   ArrowRight,
   MousePointerClick,
   AlertCircle,
@@ -288,10 +287,7 @@ export const PlatformFeeModal: React.FC<PlatformFeeModalProps> = ({
           </button>
 
           <div className="flex items-center gap-2 mb-2">
-            <span className="px-2.5 py-0.5 rounded-full bg-white/20 backdrop-blur-md text-[11px] font-semibold tracking-wide uppercase">
-              Creator Revenue Model
-            </span>
-            <span className="flex items-center gap-1 text-[11px] font-medium bg-black/20 px-2 py-0.5 rounded-full">
+            <span className="flex items-center gap-1 text-[11px] font-medium bg-black/20 px-2.5 py-0.5 rounded-full">
               <Sparkles className="w-3 h-3 text-amber-200" />
               {currentMonthName}
             </span>
@@ -442,11 +438,6 @@ export const PlatformFeeModal: React.FC<PlatformFeeModalProps> = ({
                     ₹{tier.platformFee.toLocaleString('en-IN')}
                     <span className="text-xs font-normal text-neutral-400 ml-1">/ month</span>
                   </span>
-                </div>
-
-                <div className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 font-medium">
-                  <Lock className="w-3.5 h-3.5" />
-                  <span>256-Bit Encrypted</span>
                 </div>
               </div>
 

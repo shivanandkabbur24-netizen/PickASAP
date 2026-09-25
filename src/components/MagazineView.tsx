@@ -23,6 +23,7 @@ import {
 import { Product, CategoryType, StoreType, SortOption } from '../types';
 import { database as db, formatPriceDisplay, parsePriceToNumber } from '../lib/firebase';
 import { ProductDetailModal } from './ProductDetailModal';
+import pickasapBannerImage from '../assets/images/pickasap_festive_banner_1790333064627.jpg';
 
 // Calculate effective discount percentage from explicit fields or MRP comparison
 export const getEffectiveDiscount = (product: Product): number => {
@@ -596,41 +597,16 @@ export const MagazineView: React.FC<MagazineViewProps> = ({
 
   return (
     <div className="w-full min-h-screen bg-white text-neutral-900 dark:bg-[#0c0c0d] dark:text-[#f3f3f3] transition-colors duration-300">
-      {/* Editorial Top Hero Section matching Image 1 */}
-      <section className="relative w-full border-b border-neutral-100 dark:border-neutral-800/80 overflow-hidden py-16 sm:py-24 px-4 sm:px-6">
-        {/* Subtle decorative curved architectural lines as shown in reference Image 1 */}
-        <div className="absolute inset-0 pointer-events-none opacity-40 dark:opacity-15 flex items-center justify-center">
-          <svg className="w-full h-full max-w-5xl" viewBox="0 0 1000 400" fill="none">
-            <path
-              d="M-100 350 C 200 400, 350 200, 600 300 C 850 400, 950 150, 1100 250"
-              stroke="currentColor"
-              strokeWidth="0.75"
-              strokeDasharray="4 4"
-            />
-            <path
-              d="M-50 280 C 250 340, 450 120, 700 240 C 950 360, 1050 100, 1150 180"
-              stroke="currentColor"
-              strokeWidth="0.5"
-            />
-            <circle cx="850" cy="220" r="140" stroke="currentColor" strokeWidth="0.5" />
-            <circle cx="850" cy="220" r="180" stroke="currentColor" strokeWidth="0.4" strokeDasharray="3 3" />
-            <circle cx="150" cy="320" r="100" stroke="currentColor" strokeWidth="0.4" />
-          </svg>
-        </div>
-
-        <div className="relative max-w-4xl mx-auto text-center z-10">
-          <h1 className="font-heading-editorial text-4xl sm:text-6xl lg:text-7xl font-bold tracking-tight text-neutral-900 dark:text-white leading-[1.1] mb-6">
-            Welcome to PickASAP
-          </h1>
-
-          <div className="max-w-2xl mx-auto text-neutral-600 dark:text-neutral-400 text-base sm:text-lg font-serif-editorial leading-relaxed space-y-4">
-            <p>
-              A high-end digital shopping magazine bringing you carefully verified product recommendations, exclusive bargains, and authentic affiliate selections from Amazon, Flipkart, and Myntra.
-            </p>
-            <p className="text-sm font-sans text-neutral-500 dark:text-neutral-400">
-              Browse by aesthetic, save your favorites, and click any item to shop directly through our verified affiliate links.
-            </p>
-          </div>
+      {/* Top Hero Banner Section */}
+      <section className="relative w-full border-b border-neutral-100 dark:border-neutral-800/80 overflow-hidden bg-white dark:bg-[#0c0c0d]">
+        {/* Hero Banner Image */}
+        <div className="relative w-full overflow-hidden flex items-center justify-center">
+          <img
+            src={pickasapBannerImage}
+            alt="PickASAP - Where Affiliate Marketers Meet Smart Shoppers"
+            referrerPolicy="no-referrer"
+            className="w-full h-auto max-h-[700px] object-cover sm:object-contain object-center transition-all duration-300 select-none shadow-xs"
+          />
         </div>
       </section>
 

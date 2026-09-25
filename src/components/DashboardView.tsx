@@ -42,7 +42,6 @@ import {
   getMonthlyClicksForUser,
   isPlatformFeePaidForMonth,
   markPlatformFeePaid,
-  setSimulatedClicks,
   REVENUE_TIERS,
 } from '../lib/revenueModel';
 
@@ -779,50 +778,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   <ArrowRight className="w-3.5 h-3.5" />
                 </button>
               )}
-            </div>
-
-            {/* Quick Test / Demo Simulation for 10,000+ clicks threshold */}
-            <div className="col-span-1 md:col-span-2 lg:col-span-4 p-3 rounded-2xl bg-neutral-100/70 dark:bg-[#151720] border border-neutral-200 dark:border-neutral-800 flex items-center justify-between gap-3 text-xs flex-wrap">
-              <div className="flex items-center gap-2">
-                <span className="font-semibold text-neutral-800 dark:text-neutral-200 text-[11px]">
-                  Revenue Model 10k+ Clicks Simulator:
-                </span>
-                <span className="text-[11px] text-neutral-500 dark:text-neutral-400">
-                  {currentUserState.simulatedClicks ? `Currently simulating ${currentUserState.simulatedClicks.toLocaleString('en-IN')} clicks` : 'Using actual click telemetry'}
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                {currentUserState.simulatedClicks ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const updated = setSimulatedClicks(currentUserState, null);
-                      setCurrentUserState(updated);
-                    }}
-                    className="px-2.5 py-1 rounded-lg bg-neutral-200 dark:bg-neutral-800 hover:bg-neutral-300 dark:hover:bg-neutral-700 text-neutral-700 dark:text-neutral-300 text-[11px] font-medium transition-colors cursor-pointer"
-                  >
-                    Reset to Actual Clicks
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const updated = setSimulatedClicks(currentUserState, 12500);
-                      setCurrentUserState(updated);
-                    }}
-                    className="px-2.5 py-1 rounded-lg bg-[#FF6E40]/15 hover:bg-[#FF6E40]/25 text-[#FF6E40] border border-[#FF6E40]/30 text-[11px] font-semibold transition-colors cursor-pointer"
-                  >
-                    Simulate 12,500 Clicks (Growth Tier: ₹499/mo)
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => setIsPlatformFeeModalOpen(true)}
-                  className="px-2.5 py-1 rounded-lg bg-[#0c2340] text-white hover:bg-[#133056] text-[11px] font-semibold transition-colors cursor-pointer flex items-center gap-1"
-                >
-                  <span>Preview Razorpay Modal</span>
-                </button>
-              </div>
             </div>
           </div>
 

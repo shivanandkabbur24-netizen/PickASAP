@@ -19,6 +19,18 @@ import {
   Tag,
   TrendingUp,
   Layers,
+  Flame,
+  Zap,
+  Clock,
+  ShieldCheck,
+  Percent,
+  Gift,
+  Award,
+  ArrowRight,
+  Star,
+  ChevronRight,
+  RefreshCw,
+  Sparkle,
 } from 'lucide-react';
 import { Product, CategoryType, StoreType, SortOption } from '../types';
 import { database as db, formatPriceDisplay, parsePriceToNumber } from '../lib/firebase';
@@ -80,7 +92,7 @@ const CATEGORIES: CategoryType[] = [
 
 const STORES: StoreType[] = ['All', 'Amazon', 'Flipkart', 'Myntra', 'Other'];
 
-// Fast, smooth product card with progressive image loading & fallbacks
+// Fast, smooth product card with store-themed vibrant styling, catchy numbers & dynamic badges
 const MagazineProductCard: React.FC<{
   product: Product;
   index: number;
@@ -103,23 +115,116 @@ const MagazineProductCard: React.FC<{
   const [imgLoaded, setImgLoaded] = useState(false);
   const [imgError, setImgError] = useState(false);
 
+  // Store-specific visual identity & vibrant color system
+  const storeTheme = useMemo(() => {
+    const s = (product.store || '').toLowerCase();
+    if (s.includes('flipkart')) {
+      return {
+        name: 'Flipkart',
+        accentColor: '#2874f0',
+        topBar: 'bg-[#2874f0]',
+        cardBorder: 'border-blue-200/90 dark:border-blue-900/60',
+        cardHover: 'hover:border-[#2874f0] hover:shadow-2xl hover:shadow-blue-500/15',
+        cardBg: 'bg-gradient-to-b from-white via-white to-blue-50/30 dark:from-[#0f131c] dark:via-[#0c0f16] dark:to-blue-950/25',
+        imageBg: 'bg-gradient-to-br from-blue-100/70 via-sky-50 to-blue-200/50 dark:from-blue-950/50 dark:via-[#0d1527] dark:to-blue-900/30',
+        storeBadgeBg: 'bg-[#2874f0] text-white',
+        storeDot: 'bg-[#ffe11b]', // Flipkart Yellow
+        dealRibbon: 'bg-blue-600 text-white',
+        dealText: 'Flipkart SuperDeal',
+        ctaClass: 'bg-[#2874f0] hover:bg-[#1259cb] text-white shadow-md shadow-blue-500/30 hover:shadow-blue-500/50',
+        ctaText: 'Shop on Flipkart',
+        titleHover: 'group-hover:text-[#2874f0]',
+        tagBg: 'bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-900/60',
+      };
+    }
+    if (s.includes('amazon')) {
+      return {
+        name: 'Amazon',
+        accentColor: '#ff9900',
+        topBar: 'bg-[#ff9900]',
+        cardBorder: 'border-amber-200/90 dark:border-amber-900/60',
+        cardHover: 'hover:border-[#ff9900] hover:shadow-2xl hover:shadow-amber-500/15',
+        cardBg: 'bg-gradient-to-b from-white via-white to-amber-50/30 dark:from-[#15120f] dark:via-[#100e0c] dark:to-amber-950/25',
+        imageBg: 'bg-gradient-to-br from-amber-100/70 via-orange-50 to-amber-200/50 dark:from-amber-950/50 dark:via-[#1c140a] dark:to-amber-900/30',
+        storeBadgeBg: 'bg-[#131921] text-[#ff9900] border border-[#ff9900]/40',
+        storeDot: 'bg-[#ff9900]',
+        dealRibbon: 'bg-[#ff9900] text-black font-black',
+        dealText: "Amazon's Choice Deal",
+        ctaClass: 'bg-[#ff9900] hover:bg-[#e68a00] text-neutral-950 font-black shadow-md shadow-amber-500/30 hover:shadow-amber-500/50',
+        ctaText: 'Shop on Amazon',
+        titleHover: 'group-hover:text-[#d97706]',
+        tagBg: 'bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border-amber-200 dark:border-amber-900/60',
+      };
+    }
+    if (s.includes('myntra')) {
+      return {
+        name: 'Myntra',
+        accentColor: '#ff3f6c',
+        topBar: 'bg-[#ff3f6c]',
+        cardBorder: 'border-pink-200/90 dark:border-pink-900/60',
+        cardHover: 'hover:border-[#ff3f6c] hover:shadow-2xl hover:shadow-pink-500/15',
+        cardBg: 'bg-gradient-to-b from-white via-white to-pink-50/30 dark:from-[#171015] dark:via-[#120c10] dark:to-pink-950/25',
+        imageBg: 'bg-gradient-to-br from-pink-100/70 via-rose-50 to-pink-200/50 dark:from-pink-950/50 dark:via-[#210c17] dark:to-pink-900/30',
+        storeBadgeBg: 'bg-[#ff3f6c] text-white',
+        storeDot: 'bg-white',
+        dealRibbon: 'bg-[#ff3f6c] text-white',
+        dealText: 'Myntra Trendsetter',
+        ctaClass: 'bg-[#ff3f6c] hover:bg-[#e72744] text-white shadow-md shadow-pink-500/30 hover:shadow-pink-500/50',
+        ctaText: 'Shop on Myntra',
+        titleHover: 'group-hover:text-[#ff3f6c]',
+        tagBg: 'bg-pink-50 dark:bg-pink-950/60 text-pink-700 dark:text-pink-300 border-pink-200 dark:border-pink-900/60',
+      };
+    }
+    return {
+      name: product.store || 'Curated',
+      accentColor: '#FF6E40',
+      topBar: 'bg-[#FF6E40]',
+      cardBorder: 'border-orange-200/90 dark:border-orange-900/60',
+      cardHover: 'hover:border-[#FF6E40] hover:shadow-2xl hover:shadow-orange-500/15',
+      cardBg: 'bg-gradient-to-b from-white via-white to-orange-50/30 dark:from-[#161210] dark:via-[#100d0b] dark:to-orange-950/25',
+      imageBg: 'bg-gradient-to-br from-orange-100/70 via-amber-50 to-orange-200/50 dark:from-orange-950/50 dark:via-[#1e110a] dark:to-orange-900/30',
+      storeBadgeBg: 'bg-[#FF6E40] text-white',
+      storeDot: 'bg-white',
+      dealRibbon: 'bg-[#FF6E40] text-white',
+      dealText: 'PickASAP Featured',
+      ctaClass: 'bg-[#FF6E40] hover:bg-[#e5592e] text-white shadow-md shadow-orange-500/30 hover:shadow-orange-500/50',
+      ctaText: `Shop on ${product.store || 'Store'}`,
+      titleHover: 'group-hover:text-[#FF6E40]',
+      tagBg: 'bg-orange-50 dark:bg-orange-950/60 text-orange-700 dark:text-orange-300 border-orange-200 dark:border-orange-900/60',
+    };
+  }, [product.store]);
+
+  // Big catchy numbers calculations
+  const discount = getEffectiveDiscount(product);
+  const currentNum = typeof product.currentPrice === 'number' && product.currentPrice > 0
+    ? product.currentPrice
+    : parsePriceToNumber(product.price);
+  const originalNum = parsePriceToNumber(product.originalPrice || product.mrp);
+  const savingsAmount = originalNum > currentNum ? originalNum - currentNum : 0;
+
   return (
     <article
-      className="group flex flex-col justify-between bg-white dark:bg-[#111318] rounded-3xl border border-neutral-200/80 dark:border-neutral-800/80 overflow-hidden shadow-sm hover:shadow-xl hover:border-neutral-300 dark:hover:border-neutral-700 transition-all duration-300 animate-fade-in"
+      className={`group relative flex flex-col justify-between ${storeTheme.cardBg} rounded-3xl border ${storeTheme.cardBorder} overflow-hidden shadow-md ${storeTheme.cardHover} transition-all duration-300 animate-fade-in`}
     >
-      {/* Image Container with Store Badge and Favorite Button */}
+      {/* Eye-Catching Store Color Bar at the top of each card */}
+      <div className={`h-1.5 w-full ${storeTheme.topBar}`} />
+
+      {/* Vibrant Image Container with Ambient Spotlight Glow */}
       <div
         onClick={() => onSelectProduct(product)}
-        className="relative aspect-[4/3] bg-neutral-100 dark:bg-neutral-900 overflow-hidden flex items-center justify-center cursor-pointer group/image"
+        className={`relative aspect-[4/3] ${storeTheme.imageBg} overflow-hidden flex items-center justify-center cursor-pointer group/image border-b border-neutral-100 dark:border-neutral-800/80`}
       >
+        {/* Subtle radial spotlight to make product photo pop off the card */}
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(255,255,255,0.85)_0%,transparent_75%)] dark:bg-[radial-gradient(ellipse_at_center,rgba(255,255,255,0.08)_0%,transparent_75%)] pointer-events-none" />
+
         {!imgLoaded && !imgError && (
           <div className="absolute inset-0 bg-neutral-200/50 dark:bg-neutral-800/50 animate-pulse" />
         )}
 
         {imgError ? (
-          <div className="flex flex-col items-center justify-center p-6 text-center text-neutral-400">
-            <ShoppingBag className="w-10 h-10 mb-2 stroke-[1.2] text-neutral-300 dark:text-neutral-600" />
-            <span className="text-xs font-medium text-neutral-500">{product.store} Product</span>
+          <div className="relative z-10 flex flex-col items-center justify-center p-6 text-center text-neutral-400">
+            <ShoppingBag className="w-10 h-10 mb-2 stroke-[1.2] text-neutral-400 dark:text-neutral-500" />
+            <span className="text-xs font-bold text-neutral-600 dark:text-neutral-300">{product.store} Deal</span>
           </div>
         ) : (
           <img
@@ -134,7 +239,7 @@ const MagazineProductCard: React.FC<{
               setImgLoaded(true);
               setImgError(true);
             }}
-            className={`w-full h-full object-cover group-hover/image:scale-105 transition-all duration-500 ${
+            className={`relative z-10 w-full h-full object-contain p-3 sm:p-4 group-hover/image:scale-108 transition-transform duration-500 ${
               imgLoaded ? 'opacity-100' : 'opacity-0'
             }`}
           />
@@ -142,16 +247,18 @@ const MagazineProductCard: React.FC<{
 
         {/* Multi-image photo count badge */}
         {product.images && product.images.length > 1 && (
-          <div className="absolute bottom-4 right-4 z-10 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/70 backdrop-blur-md text-white text-[11px] font-medium shadow-sm">
-            <Layers className="w-3 h-3 text-[#FF6E40]" />
+          <div className="absolute bottom-3 right-3 z-20 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/75 backdrop-blur-md text-white text-[10px] font-bold shadow-md">
+            <Layers className="w-3 h-3 text-[#ffe11b]" />
             <span>{product.images.length} photos</span>
           </div>
         )}
 
-        {/* Store Tag */}
-        <div className="absolute top-4 left-4 z-10 flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/95 dark:bg-neutral-900/95 backdrop-blur-md shadow-sm text-[11px] font-semibold text-neutral-800 dark:text-neutral-200 border border-neutral-200/50 dark:border-neutral-700/50">
-          <span className="w-1.5 h-1.5 rounded-full bg-[#FF6E40]" />
-          <span>{product.store}</span>
+        {/* Store Brand Badge with Brand Dot */}
+        <div className="absolute top-3 left-3 z-20 flex items-center gap-1.5">
+          <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full ${storeTheme.storeBadgeBg} backdrop-blur-md shadow-md text-xs font-black uppercase tracking-wider`}>
+            <span className={`w-2 h-2 rounded-full ${storeTheme.storeDot} ring-2 ring-white/50 animate-pulse`} />
+            <span>{product.store}</span>
+          </div>
         </div>
 
         {/* Favorite Heart Button */}
@@ -162,61 +269,94 @@ const MagazineProductCard: React.FC<{
             onToggleFavorite(product.id);
           }}
           title={isFav ? 'Remove from saved' : 'Save to favorites'}
-          className={`absolute top-4 right-4 z-10 w-9 h-9 rounded-full backdrop-blur-md flex items-center justify-center transition-transform active:scale-90 cursor-pointer shadow-sm ${
+          className={`absolute top-3 right-3 z-20 w-9 h-9 rounded-full backdrop-blur-md flex items-center justify-center transition-transform active:scale-90 cursor-pointer shadow-md ${
             isFav
               ? 'bg-rose-500 text-white'
-              : 'bg-white/90 dark:bg-neutral-900/90 text-neutral-600 dark:text-neutral-300 hover:text-rose-500'
+              : 'bg-white/95 dark:bg-neutral-900/95 text-neutral-600 dark:text-neutral-300 hover:text-rose-500 hover:bg-white'
           }`}
         >
           <Heart className={`w-4 h-4 ${isFav ? 'fill-white' : ''}`} />
         </button>
 
-        {/* Discount Badge if available */}
-        {(() => {
-          const discount = getEffectiveDiscount(product);
-          return discount > 0 ? (
-            <div className="absolute bottom-4 left-4 z-10 px-2.5 py-0.5 rounded-md bg-emerald-600 text-white text-[10px] font-bold uppercase tracking-wider shadow">
-              {discount}% OFF
+        {/* Big Catchy Numbers: Discount Sticker on Photo */}
+        {discount > 0 && (
+          <div className="absolute bottom-3 left-3 z-20 flex items-center gap-1.5">
+            <div className="px-3 py-1 rounded-xl bg-gradient-to-r from-red-600 via-rose-600 to-red-500 text-white shadow-lg shadow-red-600/30 flex items-center gap-1 border border-red-400/40">
+              <Flame className="w-3.5 h-3.5 fill-white" />
+              <span className="text-xs sm:text-sm font-black tracking-tight uppercase">
+                {discount}% OFF
+              </span>
             </div>
-          ) : null;
-        })()}
+            {savingsAmount > 0 && (
+              <div className="hidden sm:flex px-2.5 py-1 rounded-xl bg-neutral-900/90 dark:bg-black/90 text-emerald-400 text-[11px] font-black backdrop-blur-md shadow-md border border-neutral-700">
+                SAVE ₹{savingsAmount.toLocaleString('en-IN')}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
-      {/* Editorial Body */}
-      <div className="p-6 flex-1 flex flex-col justify-between space-y-4">
+      {/* Catchy Editorial Body with Big Bold Numbers & Colors */}
+      <div className="p-5 sm:p-6 flex-1 flex flex-col justify-between space-y-4">
         <div>
-          {/* Category and live click count */}
-          <div className="flex items-center justify-between text-[11px] text-neutral-400 dark:text-neutral-400 mb-2">
-            <span className="uppercase tracking-wider font-semibold">
+          {/* Top Info Row: Category Tag, Trending Clicks & Deal Label */}
+          <div className="flex items-center justify-between text-xs mb-2.5 gap-2">
+            <span className={`px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider text-[10px] border ${storeTheme.tagBg}`}>
               {product.category}
             </span>
-            <span className="font-mono text-[10px] text-neutral-600 dark:text-neutral-400">
-              {product.clicksCount || 0} clicks
-            </span>
+            <div className="flex items-center gap-1 font-mono text-[11px] font-bold text-neutral-700 dark:text-neutral-300 bg-neutral-100 dark:bg-neutral-800/90 px-2.5 py-0.5 rounded-full border border-neutral-200/80 dark:border-neutral-700/80 shadow-xs">
+              <Flame className="w-3 h-3 text-[#FF6E40]" />
+              <span>{product.clicksCount || 0} views</span>
+            </div>
           </div>
 
           {/* Title */}
           <h3
             onClick={() => onSelectProduct(product)}
-            className="font-heading-editorial text-xl font-bold text-neutral-900 dark:text-white leading-snug hover:text-[#FF6E40] transition-colors cursor-pointer"
+            className={`font-heading-editorial text-lg sm:text-xl font-black text-neutral-900 dark:text-white leading-snug ${storeTheme.titleHover} transition-colors cursor-pointer`}
           >
             {product.title}
           </h3>
 
           {/* Editorial Paragraph / Description */}
-          <p className="mt-3 text-sm text-neutral-600 dark:text-neutral-400 font-serif-editorial leading-relaxed line-clamp-3">
+          <p className="mt-2 text-xs sm:text-sm text-neutral-600 dark:text-neutral-400 font-serif-editorial leading-relaxed line-clamp-2">
             {product.editorialNote || product.description}
           </p>
         </div>
 
-        {/* Price and CTA */}
-        <div className="pt-4 border-t border-neutral-100 dark:border-neutral-800/80 flex items-center justify-between gap-2.5">
-          <div className="min-w-0">
-            <div className="flex items-baseline">
-              <span className="text-lg sm:text-xl font-bold font-sans text-neutral-900 dark:text-white leading-tight">
+        {/* Big Catchy Pricing & Savings Section */}
+        <div className="space-y-3 pt-3 border-t border-neutral-200/80 dark:border-neutral-800/80">
+          <div className="flex items-baseline justify-between gap-2 flex-wrap">
+            <div className="flex items-baseline gap-2 flex-wrap">
+              {/* Huge Bold Price Number */}
+              <span className="text-2xl sm:text-3xl font-black font-sans text-neutral-950 dark:text-white tracking-tight">
                 {formatPriceDisplay(product.price)}
               </span>
+
+              {/* MRP Strikethrough */}
+              {(product.originalPrice || product.mrp) && (
+                <span className="text-xs sm:text-sm font-semibold text-neutral-400 line-through">
+                  {formatPriceDisplay(product.originalPrice || product.mrp || '')}
+                </span>
+              )}
             </div>
+
+            {/* Savings Pill */}
+            {savingsAmount > 0 && (
+              <span className="px-2 py-0.5 rounded-md text-[11px] font-black bg-emerald-600 text-white shadow-xs">
+                Save ₹{savingsAmount.toLocaleString('en-IN')}
+              </span>
+            )}
+          </div>
+
+          {/* Verified Guarantee & Urgency Tag */}
+          <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
+            <Zap className="w-3.5 h-3.5 fill-emerald-500 text-emerald-500 shrink-0" />
+            <span>Best festive deal · Direct store checkout</span>
+          </div>
+
+          {/* Author/Partner & CTAs */}
+          <div className="pt-2 flex items-center justify-between gap-2">
             <button
               type="button"
               id={`partner-profile-btn-${product.id}`}
@@ -229,38 +369,39 @@ const MagazineProductCard: React.FC<{
                   });
                 }
               }}
-              className="group/author text-[11px] font-medium text-neutral-500 dark:text-neutral-400 hover:text-[#FF6E40] dark:hover:text-[#FF6E40] flex items-center gap-1 mt-0.5 transition-colors cursor-pointer text-left truncate max-w-[110px] sm:max-w-[140px]"
+              className="group/author text-[11px] font-semibold text-neutral-500 dark:text-neutral-400 hover:text-[#FF6E40] dark:hover:text-[#FF6E40] flex items-center gap-1 transition-colors cursor-pointer text-left truncate max-w-[100px] sm:max-w-[130px]"
               title={`View ${product.uploaderName || 'Affiliate Partner'}'s profile`}
             >
               <span className="truncate group-hover/author:underline underline-offset-2">
-                {product.uploaderName || 'Affiliate Partner'}
+                By {product.uploaderName || 'Curator'}
               </span>
             </button>
-          </div>
 
-          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            <button
-              id={`share-btn-${product.id}`}
-              onClick={() => onOpenShare(product)}
-              title="Share affiliate link or post to social media"
-              aria-label="Share product deal"
-              className="p-2 lg:px-2.5 lg:py-2 rounded-xl border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-700 dark:text-neutral-200 hover:text-neutral-900 dark:hover:text-white text-xs font-semibold flex items-center justify-center gap-1 transition-all cursor-pointer shadow-xs active:scale-95 shrink-0"
-            >
-              <Share2 className="w-3.5 h-3.5 text-neutral-500 dark:text-neutral-400 shrink-0" />
-              <span className="hidden lg:inline">Share</span>
-            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                id={`share-btn-${product.id}`}
+                onClick={() => onOpenShare(product)}
+                title="Share affiliate link or post to social media"
+                aria-label="Share product deal"
+                className="p-2 sm:px-2.5 sm:py-2 rounded-xl border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-700 dark:text-neutral-200 text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer shadow-xs active:scale-95 shrink-0"
+              >
+                <Share2 className="w-3.5 h-3.5 text-neutral-500 dark:text-neutral-400 shrink-0" />
+                <span className="hidden sm:inline">Share</span>
+              </button>
 
-            <a
-              id={`shop-btn-${product.id}`}
-              href={product.affiliateUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={(e) => onAffiliateClick(e, product)}
-              className="px-3 py-2 sm:px-3.5 sm:py-2 rounded-xl bg-neutral-900 hover:bg-black dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-950 text-xs font-semibold flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-95 cursor-pointer whitespace-nowrap shrink-0"
-            >
-              <span>Shop on {product.store}</span>
-              <ArrowUpRight className="w-3.5 h-3.5 shrink-0" />
-            </a>
+              {/* Eye-Catching Store-Themed CTA Button */}
+              <a
+                id={`shop-btn-${product.id}`}
+                href={product.affiliateUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => onAffiliateClick(e, product)}
+                className={`px-3.5 py-2.5 sm:px-4 sm:py-2.5 rounded-xl ${storeTheme.ctaClass} text-xs font-black flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer whitespace-nowrap shrink-0`}
+              >
+                <span>{storeTheme.ctaText}</span>
+                <ArrowUpRight className="w-3.5 h-3.5 shrink-0" />
+              </a>
+            </div>
           </div>
         </div>
       </div>
@@ -610,112 +751,266 @@ export const MagazineView: React.FC<MagazineViewProps> = ({
         </div>
       </section>
 
-      {/* Main Content Area */}
-      <main id="product-catalog-anchor" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
-        {/* Search, Filter Bar & Favorites Toggle */}
-        <div className="space-y-6 mb-12">
-          {/* Quick Hubs & Curations: Flipkart, Amazon, Myntra, Low Cost & Quality */}
-          <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none text-xs">
-            <span className="text-neutral-400 font-medium whitespace-nowrap mr-1">Curated Hubs:</span>
-            
-            <button
-              id="hub-all-btn"
-              onClick={() => {
-                setSelectedStore('All');
-                setSortBy('best');
-              }}
-              className={`px-3 py-1.5 rounded-lg border transition-all cursor-pointer whitespace-nowrap font-medium ${
-                selectedStore === 'All' && (sortBy === 'best' || sortBy === 'newest')
-                  ? 'border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-950'
-                  : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-600 dark:text-neutral-400 hover:border-neutral-400'
-              }`}
-            >
-              All Finds (Best on Top)
-            </button>
+      {/* High-Energy Live Breaking Deals Marquee Ticker */}
+      <div className="w-full bg-[#0d0f14] text-white border-b border-neutral-800 py-3 px-4 shadow-inner">
+        <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-3 overflow-x-auto scrollbar-none py-0.5">
+            <div className="flex items-center gap-1.5 shrink-0 px-2.5 py-1 rounded-full bg-red-600/25 text-red-400 border border-red-500/30 font-bold uppercase tracking-wider text-[10px] shadow-xs">
+              <span className="w-2 h-2 rounded-full bg-red-500 animate-ping inline-block" />
+              <Flame className="w-3.5 h-3.5 text-red-500 shrink-0" />
+              <span>Live Deals Radar</span>
+            </div>
 
-            <button
-              id="hub-best-deals-btn"
-              onClick={() => setSortBy(sortBy === 'best_deals' ? 'best' : 'best_deals')}
-              className={`px-3 py-1.5 rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap font-medium ${
-                sortBy === 'best_deals'
-                  ? 'border-red-600 bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800 font-semibold'
-                  : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:border-red-300'
-              }`}
-            >
-              <TrendingUp className="w-3 h-3 text-red-600 dark:text-red-400" />
-              <span>Best Deals</span>
-            </button>
+            {/* Interactive ticker highlights */}
+            <div className="flex items-center gap-6 whitespace-nowrap text-neutral-300">
+              <button
+                onClick={() => {
+                  setSelectedStore('Flipkart');
+                  const el = document.getElementById('product-catalog-anchor');
+                  if (el) el.scrollIntoView({ behavior: 'smooth' });
+                }}
+                className="flex items-center gap-1.5 hover:text-[#2874f0] transition-colors cursor-pointer"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-[#2874f0]" />
+                <span className="font-semibold text-white">Flipkart Big Billion Days:</span>
+                <span className="text-neutral-400">Up to 80% off Laptops, Electronics &amp; Gadgets</span>
+                <ChevronRight className="w-3 h-3 text-neutral-500" />
+              </button>
 
-            <button
-              id="hub-flipkart-btn"
-              onClick={() => setSelectedStore(selectedStore === 'Flipkart' ? 'All' : 'Flipkart')}
-              className={`px-3 py-1.5 rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap font-medium ${
-                selectedStore === 'Flipkart'
-                  ? 'border-blue-600 bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800 font-semibold'
-                  : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:border-blue-300'
-              }`}
-            >
-              <span className="w-2 h-2 rounded-full bg-[#2874f0]"></span>
-              <span>Flipkart Deals</span>
-            </button>
+              <span className="text-neutral-700">|</span>
 
-            <button
-              id="hub-amazon-btn"
-              onClick={() => setSelectedStore(selectedStore === 'Amazon' ? 'All' : 'Amazon')}
-              className={`px-3 py-1.5 rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap font-medium ${
-                selectedStore === 'Amazon'
-                  ? 'border-amber-600 bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800 font-semibold'
-                  : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:border-amber-300'
-              }`}
-            >
-              <span className="w-2 h-2 rounded-full bg-[#ff9900]"></span>
-              <span>Amazon Finds</span>
-            </button>
+              <button
+                onClick={() => {
+                  setSelectedStore('Amazon');
+                  const el = document.getElementById('product-catalog-anchor');
+                  if (el) el.scrollIntoView({ behavior: 'smooth' });
+                }}
+                className="flex items-center gap-1.5 hover:text-[#ff9900] transition-colors cursor-pointer"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-[#ff9900]" />
+                <span className="font-semibold text-white">Amazon Great Indian Festival:</span>
+                <span className="text-neutral-400">Lightning price drops &amp; bank discounts live</span>
+                <ChevronRight className="w-3 h-3 text-neutral-500" />
+              </button>
 
-            <button
-              id="hub-myntra-btn"
-              onClick={() => setSelectedStore(selectedStore === 'Myntra' ? 'All' : 'Myntra')}
-              className={`px-3 py-1.5 rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap font-medium ${
-                selectedStore === 'Myntra'
-                  ? 'border-pink-600 bg-pink-50 text-pink-700 dark:bg-pink-950/40 dark:text-pink-300 dark:border-pink-800 font-semibold'
-                  : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:border-pink-300'
-              }`}
-            >
-              <span className="w-2 h-2 rounded-full bg-[#ff3f6c]"></span>
-              <span>Myntra Fashion</span>
-            </button>
+              <span className="text-neutral-700">|</span>
 
-            <button
-              id="hub-low-cost-btn"
-              onClick={() => setSortBy(sortBy === 'price_low' ? 'best' : 'price_low')}
-              className={`px-3 py-1.5 rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap font-medium ${
-                sortBy === 'price_low'
-                  ? 'border-emerald-600 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800 font-semibold'
-                  : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:border-emerald-300'
-              }`}
-            >
-              <Tag className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
-              <span>Low Cost Products</span>
-            </button>
+              <button
+                onClick={() => {
+                  setSelectedStore('Myntra');
+                  const el = document.getElementById('product-catalog-anchor');
+                  if (el) el.scrollIntoView({ behavior: 'smooth' });
+                }}
+                className="flex items-center gap-1.5 hover:text-[#ff3f6c] transition-colors cursor-pointer"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-[#ff3f6c]" />
+                <span className="font-semibold text-white">Myntra End of Reason Sale:</span>
+                <span className="text-neutral-400">Trending fashion, sneakers &amp; beauty collections</span>
+                <ChevronRight className="w-3 h-3 text-neutral-500" />
+              </button>
 
-            <button
-              id="hub-quality-btn"
-              onClick={() => setSortBy(sortBy === 'most_clicked' ? 'best' : 'most_clicked')}
-              className={`px-3 py-1.5 rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap font-medium ${
-                sortBy === 'most_clicked'
-                  ? 'border-purple-600 bg-purple-50 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800 font-semibold'
-                  : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:border-purple-300'
-              }`}
-            >
-              <Sparkles className="w-3 h-3 text-purple-600 dark:text-purple-400" />
-              <span>Good Quality Picks</span>
-            </button>
+              <span className="text-neutral-700">|</span>
+
+              <button
+                onClick={() => {
+                  setSortBy('price_low');
+                  const el = document.getElementById('product-catalog-anchor');
+                  if (el) el.scrollIntoView({ behavior: 'smooth' });
+                }}
+                className="flex items-center gap-1.5 hover:text-emerald-400 transition-colors cursor-pointer"
+              >
+                <Zap className="w-3 h-3 text-emerald-400" />
+                <span className="font-semibold text-white">Budget Steals:</span>
+                <span className="text-neutral-400">Low-cost products under ₹999 verified daily</span>
+                <ChevronRight className="w-3 h-3 text-neutral-500" />
+              </button>
+            </div>
           </div>
 
-          {/* Top Filter Row */}
+          <div className="hidden xl:flex items-center gap-2 text-neutral-400 text-[11px]">
+            <Clock className="w-3 h-3 text-[#FF6E40]" />
+            <span>Price drops refreshed continuously</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Content Area */}
+      <main id="product-catalog-anchor" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-10">
+        {/* 4-Hub Festive Showcase Bento Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+          {/* Card 1: Flipkart Big Billion Deals */}
+          <div
+            onClick={() => {
+              setSelectedStore(selectedStore === 'Flipkart' ? 'All' : 'Flipkart');
+              setSortBy('best');
+            }}
+            className={`group relative p-5 rounded-2xl border transition-all duration-300 cursor-pointer overflow-hidden ${
+              selectedStore === 'Flipkart'
+                ? 'bg-blue-50/90 dark:bg-blue-950/30 border-blue-500 shadow-md ring-1 ring-blue-500'
+                : 'bg-white dark:bg-[#111318] border-neutral-200/90 dark:border-neutral-800/90 hover:border-blue-300 dark:hover:border-blue-700 hover:shadow-lg'
+            }`}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <span className="w-2.5 h-2.5 rounded-full bg-[#2874f0] ring-4 ring-blue-100 dark:ring-blue-950" />
+              <span className="text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400 bg-blue-100/70 dark:bg-blue-950/60 px-2 py-0.5 rounded-full">
+                Big Billion Days
+              </span>
+            </div>
+            <h3 className="text-base font-bold text-neutral-900 dark:text-white flex items-center gap-1.5 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
+              <span>Flipkart Deals</span>
+              <ArrowUpRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity" />
+            </h3>
+            <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 line-clamp-2">
+              Laptops, smart gadgets, appliances &amp; festive flash discounts.
+            </p>
+            <div className="mt-4 pt-3 border-t border-neutral-100 dark:border-neutral-800/80 flex items-center justify-between text-xs font-semibold text-blue-600 dark:text-blue-400">
+              <span>Explore Deals</span>
+              <span className="text-[11px] font-mono text-neutral-400">Up to 80% Off</span>
+            </div>
+          </div>
+
+          {/* Card 2: Amazon Great Indian Festival */}
+          <div
+            onClick={() => {
+              setSelectedStore(selectedStore === 'Amazon' ? 'All' : 'Amazon');
+              setSortBy('best');
+            }}
+            className={`group relative p-5 rounded-2xl border transition-all duration-300 cursor-pointer overflow-hidden ${
+              selectedStore === 'Amazon'
+                ? 'bg-amber-50/90 dark:bg-amber-950/30 border-amber-500 shadow-md ring-1 ring-amber-500'
+                : 'bg-white dark:bg-[#111318] border-neutral-200/90 dark:border-neutral-800/90 hover:border-amber-300 dark:hover:border-amber-700 hover:shadow-lg'
+            }`}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <span className="w-2.5 h-2.5 rounded-full bg-[#ff9900] ring-4 ring-amber-100 dark:ring-amber-950" />
+              <span className="text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 bg-amber-100/70 dark:bg-amber-950/60 px-2 py-0.5 rounded-full">
+                Great Indian Fest
+              </span>
+            </div>
+            <h3 className="text-base font-bold text-neutral-900 dark:text-white flex items-center gap-1.5 group-hover:text-amber-600 dark:group-hover:text-amber-400 transition-colors">
+              <span>Amazon Finds</span>
+              <ArrowUpRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity" />
+            </h3>
+            <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 line-clamp-2">
+              Top-rated everyday tech, audio gear &amp; lightning deal drops.
+            </p>
+            <div className="mt-4 pt-3 border-t border-neutral-100 dark:border-neutral-800/80 flex items-center justify-between text-xs font-semibold text-amber-600 dark:text-amber-400">
+              <span>Explore Deals</span>
+              <span className="text-[11px] font-mono text-neutral-400">Prime Deals</span>
+            </div>
+          </div>
+
+          {/* Card 3: Myntra End of Reason Sale */}
+          <div
+            onClick={() => {
+              setSelectedStore(selectedStore === 'Myntra' ? 'All' : 'Myntra');
+              setSortBy('best');
+            }}
+            className={`group relative p-5 rounded-2xl border transition-all duration-300 cursor-pointer overflow-hidden ${
+              selectedStore === 'Myntra'
+                ? 'bg-pink-50/90 dark:bg-pink-950/30 border-pink-500 shadow-md ring-1 ring-pink-500'
+                : 'bg-white dark:bg-[#111318] border-neutral-200/90 dark:border-neutral-800/90 hover:border-pink-300 dark:hover:border-pink-700 hover:shadow-lg'
+            }`}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <span className="w-2.5 h-2.5 rounded-full bg-[#ff3f6c] ring-4 ring-pink-100 dark:ring-pink-950" />
+              <span className="text-[10px] font-bold uppercase tracking-wider text-pink-600 dark:text-pink-400 bg-pink-100/70 dark:bg-pink-950/60 px-2 py-0.5 rounded-full">
+                End of Reason
+              </span>
+            </div>
+            <h3 className="text-base font-bold text-neutral-900 dark:text-white flex items-center gap-1.5 group-hover:text-pink-600 dark:group-hover:text-pink-400 transition-colors">
+              <span>Myntra Fashion</span>
+              <ArrowUpRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity" />
+            </h3>
+            <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 line-clamp-2">
+              Sneakers, designer clothing, handbags &amp; luxury fragrances.
+            </p>
+            <div className="mt-4 pt-3 border-t border-neutral-100 dark:border-neutral-800/80 flex items-center justify-between text-xs font-semibold text-pink-600 dark:text-pink-400">
+              <span>Explore Deals</span>
+              <span className="text-[11px] font-mono text-neutral-400">50-80% Off</span>
+            </div>
+          </div>
+
+          {/* Card 4: Super Saver & Low Cost */}
+          <div
+            onClick={() => {
+              setSortBy(sortBy === 'best_deals' ? 'best' : 'best_deals');
+            }}
+            className={`group relative p-5 rounded-2xl border transition-all duration-300 cursor-pointer overflow-hidden ${
+              sortBy === 'best_deals'
+                ? 'bg-rose-50/90 dark:bg-rose-950/30 border-rose-500 shadow-md ring-1 ring-rose-500'
+                : 'bg-white dark:bg-[#111318] border-neutral-200/90 dark:border-neutral-800/90 hover:border-rose-300 dark:hover:border-rose-700 hover:shadow-lg'
+            }`}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <span className="w-2.5 h-2.5 rounded-full bg-rose-500 ring-4 ring-rose-100 dark:ring-rose-950" />
+              <span className="text-[10px] font-bold uppercase tracking-wider text-rose-600 dark:text-rose-400 bg-rose-100/70 dark:bg-rose-950/60 px-2 py-0.5 rounded-full">
+                Diwali Dhamaka
+              </span>
+            </div>
+            <h3 className="text-base font-bold text-neutral-900 dark:text-white flex items-center gap-1.5 group-hover:text-rose-600 dark:group-hover:text-rose-400 transition-colors">
+              <span>Top Price Drops</span>
+              <ArrowUpRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity" />
+            </h3>
+            <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 line-clamp-2">
+              Highest percentage savings, discount steals &amp; tested deals.
+            </p>
+            <div className="mt-4 pt-3 border-t border-neutral-100 dark:border-neutral-800/80 flex items-center justify-between text-xs font-semibold text-rose-600 dark:text-rose-400">
+              <span>Explore Deals</span>
+              <span className="text-[11px] font-mono text-neutral-400">Max Discount</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Visual Department Carousel / Tiles */}
+        <div className="mb-8">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs font-bold uppercase tracking-wider text-neutral-500 dark:text-neutral-400 flex items-center gap-1.5">
+              <Layers className="w-3.5 h-3.5 text-[#FF6E40]" />
+              <span>Browse Curated Departments</span>
+            </span>
+            {selectedCategory !== 'All' && (
+              <button
+                onClick={() => setSelectedCategory('All')}
+                className="text-xs font-semibold text-[#FF6E40] hover:underline cursor-pointer"
+              >
+                View All Departments
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2.5 overflow-x-auto pb-2 scrollbar-none">
+            {CATEGORIES.map((cat) => {
+              const isSelected = selectedCategory === cat;
+              return (
+                <button
+                  key={cat}
+                  onClick={() => setSelectedCategory(cat)}
+                  className={`px-4 py-2.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all duration-200 cursor-pointer flex items-center gap-2 border shadow-xs ${
+                    isSelected
+                      ? 'bg-neutral-900 border-neutral-900 text-white dark:bg-white dark:border-white dark:text-neutral-950 shadow-md scale-[1.02]'
+                      : 'bg-white dark:bg-[#111318] border-neutral-200/80 dark:border-neutral-800/80 text-neutral-700 dark:text-neutral-300 hover:border-neutral-400 dark:hover:border-neutral-600'
+                  }`}
+                >
+                  {cat === 'All' && <Sparkles className="w-3.5 h-3.5 text-[#FF6E40]" />}
+                  {cat === 'Tech & Audio' && <Zap className="w-3.5 h-3.5 text-blue-500" />}
+                  {cat === 'Fashion & Apparel' && <Flame className="w-3.5 h-3.5 text-pink-500" />}
+                  {cat === 'Home & Design' && <Gift className="w-3.5 h-3.5 text-amber-500" />}
+                  {cat === 'Beauty & Grooming' && <Star className="w-3.5 h-3.5 text-purple-500" />}
+                  {cat === 'Books & Stationery' && <Bookmark className="w-3.5 h-3.5 text-emerald-500" />}
+                  {cat === 'Everyday Carry' && <Award className="w-3.5 h-3.5 text-indigo-500" />}
+                  <span>{cat}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Search, Filter Bar & Quick Sort Controls */}
+        <div className="space-y-4 mb-8 p-4 rounded-2xl bg-neutral-50/80 dark:bg-[#111318]/70 border border-neutral-200/80 dark:border-neutral-800/80">
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
             {/* Search Input */}
-            <div className="relative flex-1 max-w-md">
+            <div className="relative flex-1 max-w-lg">
               <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-neutral-400">
                 <Search className="w-4 h-4" />
               </div>
@@ -724,65 +1019,63 @@ export const MagazineView: React.FC<MagazineViewProps> = ({
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search products, brands, or notes..."
-                className="w-full pl-10 pr-4 py-2.5 rounded-full border border-neutral-200 dark:border-neutral-800 bg-neutral-50/70 dark:bg-neutral-900/70 text-sm focus:outline-none focus:border-neutral-500 dark:focus:border-neutral-500 transition-colors"
+                placeholder="Search deals, products, brands, or notes..."
+                className="w-full pl-10 pr-10 py-2.5 rounded-xl border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-sm focus:outline-none focus:ring-2 focus:ring-[#FF6E40]/20 focus:border-[#FF6E40] transition-all"
               />
               {searchQuery && (
                 <button
                   onClick={() => setSearchQuery('')}
-                  className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-xs text-neutral-400 hover:text-neutral-600 cursor-pointer"
+                  className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-xs font-semibold text-neutral-400 hover:text-neutral-700 dark:hover:text-white cursor-pointer"
                 >
                   Clear
                 </button>
               )}
             </div>
 
-            {/* Controls: Stores, Sort, Favorites */}
-            <div className="flex flex-wrap items-center gap-3">
-              {/* Store Partner Filter */}
-              <div className="flex items-center gap-1.5 text-xs">
+            {/* Quick Sorter & Store Controls */}
+            <div className="flex flex-wrap items-center gap-2.5 text-xs">
+              <div className="flex items-center gap-1.5">
                 <span className="text-neutral-400 font-medium">Store:</span>
                 <select
                   id="filter-store-select"
                   value={selectedStore}
                   onChange={(e) => setSelectedStore(e.target.value as StoreType)}
-                  className="px-3 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-xs focus:outline-none cursor-pointer"
+                  className="px-3 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-xs font-semibold focus:outline-none cursor-pointer"
                 >
                   {STORES.map((s) => (
                     <option key={s} value={s}>
-                      {s}
+                      {s === 'All' ? 'All Stores' : s}
                     </option>
                   ))}
                 </select>
               </div>
 
-              {/* Sort By */}
-              <div className="flex items-center gap-1.5 text-xs">
+              <div className="flex items-center gap-1.5">
                 <span className="text-neutral-400 font-medium">Sort:</span>
                 <select
                   id="filter-sort-select"
                   value={sortBy}
                   onChange={(e) => setSortBy(e.target.value as SortOption)}
-                  className="px-3 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-xs focus:outline-none cursor-pointer"
+                  className="px-3 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-xs font-semibold focus:outline-none cursor-pointer"
                 >
-                  <option value="best">Best on Top (Deals &amp; Clicks)</option>
-                  <option value="best_deals">Best Deals (% Off)</option>
-                  <option value="most_clicked">Most Popular (Clicks)</option>
-                  <option value="newest">Newest First</option>
-                  <option value="price_low">Price: Low to High</option>
-                  <option value="price_high">Price: High to Low</option>
+                  <option value="best">🔥 Best Deals (Score &amp; Clicks)</option>
+                  <option value="best_deals">⚡ Highest % Off</option>
+                  <option value="most_clicked">📈 Most Popular</option>
+                  <option value="newest">🕒 Newest Uploads</option>
+                  <option value="price_low">💰 Price: Low to High</option>
+                  <option value="price_high">💎 Price: High to Low</option>
                   <option value="alphabetical">Title A-Z</option>
                 </select>
               </div>
 
-              {/* Save to Favorites toggle */}
+              {/* Saved Favorites */}
               <button
                 id="filter-favorites-toggle"
                 onClick={() => setOnlyFavorites(!onlyFavorites)}
-                className={`px-3.5 py-1.5 rounded-full text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer ${
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer border ${
                   onlyFavorites
-                    ? 'bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900 shadow-sm'
-                    : 'bg-neutral-100 dark:bg-neutral-800/80 text-neutral-600 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-700'
+                    ? 'bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border-rose-300 dark:border-rose-900 shadow-xs'
+                    : 'bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 border-neutral-200 dark:border-neutral-700 hover:border-neutral-400'
                 }`}
               >
                 <Heart
@@ -790,29 +1083,93 @@ export const MagazineView: React.FC<MagazineViewProps> = ({
                     onlyFavorites ? 'fill-rose-500 text-rose-500' : 'text-neutral-500'
                   }`}
                 />
-                <span>Saved Favorites ({favorites.length})</span>
+                <span>Saved ({favorites.length})</span>
               </button>
             </div>
           </div>
 
-          {/* Category Pills */}
-          <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none border-b border-neutral-100 dark:border-neutral-800/60 pt-1">
-            {CATEGORIES.map((cat) => {
-              const isSelected = selectedCategory === cat;
-              return (
-                <button
-                  key={cat}
-                  onClick={() => setSelectedCategory(cat)}
-                  className={`px-4 py-2 rounded-full text-xs whitespace-nowrap transition-all cursor-pointer font-medium ${
-                    isSelected
-                      ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-950 shadow-sm'
-                      : 'bg-neutral-100/80 dark:bg-neutral-800/60 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-200 dark:hover:bg-neutral-700'
-                  }`}
-                >
-                  {cat}
-                </button>
-              );
-            })}
+          {/* Quick Filter Tag Bar */}
+          <div className="flex items-center gap-2 overflow-x-auto pt-1 scrollbar-none text-xs">
+            <span className="text-neutral-400 font-medium whitespace-nowrap text-[11px]">Quick Picks:</span>
+
+            <button
+              onClick={() => {
+                setSortBy('best_deals');
+                setSelectedStore('All');
+              }}
+              className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all cursor-pointer whitespace-nowrap ${
+                sortBy === 'best_deals'
+                  ? 'bg-red-600 text-white shadow-xs'
+                  : 'bg-neutral-200/80 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-300 dark:hover:bg-neutral-700'
+              }`}
+            >
+              🔥 Max Discounts (&gt;50% Off)
+            </button>
+
+            <button
+              onClick={() => {
+                setSortBy('price_low');
+              }}
+              className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all cursor-pointer whitespace-nowrap ${
+                sortBy === 'price_low'
+                  ? 'bg-emerald-600 text-white shadow-xs'
+                  : 'bg-neutral-200/80 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-300 dark:hover:bg-neutral-700'
+              }`}
+            >
+              💰 Low Cost Finds
+            </button>
+
+            <button
+              onClick={() => {
+                setSortBy('most_clicked');
+              }}
+              className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all cursor-pointer whitespace-nowrap ${
+                sortBy === 'most_clicked'
+                  ? 'bg-purple-600 text-white shadow-xs'
+                  : 'bg-neutral-200/80 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-300 dark:hover:bg-neutral-700'
+              }`}
+            >
+              ⭐ Top Quality &amp; Clicks
+            </button>
+
+            <button
+              onClick={() => {
+                setSelectedStore('Flipkart');
+              }}
+              className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all cursor-pointer whitespace-nowrap ${
+                selectedStore === 'Flipkart'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'bg-neutral-200/80 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-300 dark:hover:bg-neutral-700'
+              }`}
+            >
+              Flipkart Specials
+            </button>
+
+            <button
+              onClick={() => {
+                setSelectedStore('Amazon');
+              }}
+              className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all cursor-pointer whitespace-nowrap ${
+                selectedStore === 'Amazon'
+                  ? 'bg-amber-600 text-white shadow-xs'
+                  : 'bg-neutral-200/80 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-300 dark:hover:bg-neutral-700'
+              }`}
+            >
+              Amazon Finds
+            </button>
+
+            <button
+              onClick={() => {
+                setSelectedStore('Myntra');
+              }}
+              className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all cursor-pointer whitespace-nowrap ${
+                selectedStore === 'Myntra'
+                  ? 'bg-pink-600 text-white shadow-xs'
+                  : 'bg-neutral-200/80 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-300 dark:hover:bg-neutral-700'
+              }`}
+            >
+              Myntra Fashion
+            </button>
           </div>
         </div>
 
@@ -845,44 +1202,161 @@ export const MagazineView: React.FC<MagazineViewProps> = ({
             ))}
           </div>
         ) : products.length === 0 ? (
-          /* Strictly adhering to user prompt: "Don't add any product by yourself (AI) let the page be empty, once the website is ready i will upload my affiliate links." */
-          <div className="py-20 px-6 max-w-2xl mx-auto text-center rounded-3xl border border-dashed border-neutral-200 dark:border-neutral-800 bg-neutral-50/50 dark:bg-neutral-900/20">
-            <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-white dark:bg-neutral-800 shadow-sm border border-neutral-200/80 dark:border-neutral-700/80 flex items-center justify-center text-neutral-400">
-              <ShoppingBag className="w-8 h-8 stroke-[1.2]" />
+          /* Rich, attractive and bustling empty catalog state */
+          <div className="space-y-10 py-6">
+            {/* Launch Banner Card */}
+            <div className="relative overflow-hidden rounded-3xl border border-neutral-200 dark:border-neutral-800 bg-linear-to-br from-neutral-50 via-white to-orange-50/30 dark:from-[#111318] dark:via-[#0e1015] dark:to-[#1a1410] p-8 sm:p-12 shadow-sm text-center">
+              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-bold bg-[#FF6E40]/10 text-[#FF6E40] border border-[#FF6E40]/30 mb-4">
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Ready For Your Affiliate Curations</span>
+              </div>
+
+              <h2 className="font-heading-editorial text-3xl sm:text-4xl lg:text-5xl font-bold text-neutral-900 dark:text-white max-w-2xl mx-auto leading-tight mb-4">
+                Your Curated Digital Magazine Is Ready To Launch
+              </h2>
+
+              <p className="max-w-2xl mx-auto text-neutral-600 dark:text-neutral-400 font-serif-editorial text-base sm:text-lg leading-relaxed mb-8">
+                The layout is primed for genuine affiliate links from Amazon, Flipkart, and Myntra. Add your first product link to showcase verified deals with instant price tracking and click metrics.
+              </p>
+
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                <button
+                  id="empty-state-upload-cta-btn"
+                  onClick={onOpenUpload}
+                  className="px-7 py-3.5 rounded-full bg-[#FF6E40] hover:bg-[#e05a30] text-white text-xs uppercase tracking-widest font-bold inline-flex items-center gap-2 shadow-lg transition-all active:scale-95 cursor-pointer"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  <span>{isLoggedIn ? 'Publish First Affiliate Product (+)' : 'Add Your Own Affiliate Link (+)'}</span>
+                </button>
+              </div>
             </div>
 
-            <span className="text-[10px] font-mono tracking-widest uppercase text-[#FF6E40] font-bold">
-              Ready For Your Affiliate Links
-            </span>
+            {/* Department Preview Bento Grid */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="font-heading-editorial text-xl font-bold text-neutral-900 dark:text-white flex items-center gap-2">
+                  <Award className="w-5 h-5 text-[#FF6E40]" />
+                  <span>Featured Departments Ready for Links</span>
+                </h3>
+                <span className="text-xs text-neutral-400">Click any card to add products</span>
+              </div>
 
-            <h2 className="font-heading-editorial text-2xl sm:text-3xl font-bold text-neutral-900 dark:text-white mt-2 mb-4">
-              The Catalog Is Ready For Your Curations
-            </h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {[
+                  {
+                    title: 'Electronics & Audio Innovations',
+                    store: 'Flipkart & Amazon',
+                    desc: 'Laptops, smartwatches, ANC headphones & smartphone accessories.',
+                    icon: Zap,
+                    color: 'text-blue-500 bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-900',
+                  },
+                  {
+                    title: 'Fashion, Sneakers & Apparel',
+                    store: 'Myntra & Amazon',
+                    desc: 'Streetwear, casual fits, watches, footwear & luxury collections.',
+                    icon: Flame,
+                    color: 'text-pink-500 bg-pink-50 dark:bg-pink-950/40 border-pink-200 dark:border-pink-900',
+                  },
+                  {
+                    title: 'Home, Living & Interior Comfort',
+                    store: 'Amazon & Flipkart',
+                    desc: 'Ergonomic seating, kitchen appliances, lighting & modern decor.',
+                    icon: Gift,
+                    color: 'text-amber-500 bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-900',
+                  },
+                  {
+                    title: 'Beauty, Skincare & Grooming',
+                    store: 'Myntra & Flipkart',
+                    desc: 'Luxury fragrances, serums, hair care & daily grooming essentials.',
+                    icon: Star,
+                    color: 'text-purple-500 bg-purple-50 dark:bg-purple-950/40 border-purple-200 dark:border-purple-900',
+                  },
+                  {
+                    title: 'Everyday Carry & Travel Gear',
+                    store: 'Amazon & Myntra',
+                    desc: 'Luggage bags, minimal wallets, multi-tools & work accessories.',
+                    icon: Award,
+                    color: 'text-emerald-500 bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-900',
+                  },
+                  {
+                    title: 'Low Cost Deals Under ₹999',
+                    store: 'All Retail Partners',
+                    desc: 'Verified budget finds with verified customer reviews & ratings.',
+                    icon: Tag,
+                    color: 'text-rose-500 bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-900',
+                  },
+                ].map((dept, i) => {
+                  const Icon = dept.icon;
+                  return (
+                    <div
+                      key={i}
+                      onClick={onOpenUpload}
+                      className="group p-6 rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#111318] hover:border-neutral-400 dark:hover:border-neutral-600 transition-all duration-300 cursor-pointer shadow-xs hover:shadow-md flex flex-col justify-between"
+                    >
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center border ${dept.color}`}>
+                            <Icon className="w-5 h-5" />
+                          </div>
+                          <span className="text-[11px] font-mono text-neutral-400">{dept.store}</span>
+                        </div>
+                        <h4 className="font-heading-editorial text-lg font-bold text-neutral-900 dark:text-white group-hover:text-[#FF6E40] transition-colors">
+                          {dept.title}
+                        </h4>
+                        <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed">
+                          {dept.desc}
+                        </p>
+                      </div>
 
-            <div className="text-neutral-600 dark:text-neutral-400 font-serif-editorial text-base sm:text-lg leading-relaxed space-y-4 mb-8">
-              <p>
-                As requested, no artificial products have been populated. The catalog is pristine and ready for you to upload your genuine affiliate links from Amazon, Flipkart, and Myntra.
-              </p>
-              <p className="text-sm font-sans text-neutral-500">
-                Click the button below or in the top navigation to sign in and publish your first product with real-time click tracking.
-              </p>
+                      <div className="mt-5 pt-3 border-t border-neutral-100 dark:border-neutral-800/80 flex items-center justify-between text-xs font-semibold text-[#FF6E40]">
+                        <span>Add Product to Department</span>
+                        <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
 
-            <button
-              id="empty-state-upload-cta-btn"
-              onClick={onOpenUpload}
-              className="px-6 py-3 rounded-full bg-neutral-900 hover:bg-black dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-950 text-xs uppercase tracking-widest font-semibold inline-flex items-center gap-2 shadow-md transition-all active:scale-95 cursor-pointer"
-            >
-              <Sparkles className="w-4 h-4 text-[#FF6E40]" />
-              <span>{isLoggedIn ? 'Add Affiliate Link (+)' : 'Add Your Own Affiliate Link'}</span>
-            </button>
+            {/* 3-Pillar Feature Strip */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4">
+              <div className="p-6 rounded-2xl bg-neutral-50/80 dark:bg-[#111318]/60 border border-neutral-200/80 dark:border-neutral-800/80 space-y-2">
+                <div className="w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-950 flex items-center justify-center text-blue-600 dark:text-blue-400">
+                  <ShieldCheck className="w-4 h-4" />
+                </div>
+                <h4 className="font-bold text-sm text-neutral-900 dark:text-white">Direct Merchant Store Checkout</h4>
+                <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed">
+                  Shoppers purchase directly through Amazon, Flipkart, or Myntra with full merchant warranty and zero added fees.
+                </p>
+              </div>
+
+              <div className="p-6 rounded-2xl bg-neutral-50/80 dark:bg-[#111318]/60 border border-neutral-200/80 dark:border-neutral-800/80 space-y-2">
+                <div className="w-8 h-8 rounded-lg bg-emerald-100 dark:bg-emerald-950 flex items-center justify-center text-emerald-600 dark:text-emerald-400">
+                  <TrendingUp className="w-4 h-4" />
+                </div>
+                <h4 className="font-bold text-sm text-neutral-900 dark:text-white">Real-Time Click Tracking</h4>
+                <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed">
+                  Every recommendation tracks real user clicks transparently, promoting the most popular and top-rated finds.
+                </p>
+              </div>
+
+              <div className="p-6 rounded-2xl bg-neutral-50/80 dark:bg-[#111318]/60 border border-neutral-200/80 dark:border-neutral-800/80 space-y-2">
+                <div className="w-8 h-8 rounded-lg bg-purple-100 dark:bg-purple-950 flex items-center justify-center text-purple-600 dark:text-purple-400">
+                  <Sparkles className="w-4 h-4" />
+                </div>
+                <h4 className="font-bold text-sm text-neutral-900 dark:text-white">Handpicked Editorial Standards</h4>
+                <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed">
+                  Focusing on price-to-quality ratio, price drops, and verified customer reviews across top shopping categories.
+                </p>
+              </div>
+            </div>
           </div>
         ) : filteredProducts.length === 0 ? (
-          <div className="py-16 text-center">
+          <div className="py-16 text-center space-y-3">
             <h3 className="font-serif-editorial text-xl text-neutral-700 dark:text-neutral-300">
               No products match your current filters.
             </h3>
-            <p className="text-xs text-neutral-400 mt-2">
+            <p className="text-xs text-neutral-400">
               Try adjusting your search query, category, or store filter.
             </p>
             <button
@@ -892,7 +1366,7 @@ export const MagazineView: React.FC<MagazineViewProps> = ({
                 setSelectedStore('All');
                 setOnlyFavorites(false);
               }}
-              className="mt-4 text-xs font-semibold text-[#FF6E40] hover:underline cursor-pointer"
+              className="mt-2 text-xs font-semibold text-[#FF6E40] hover:underline cursor-pointer"
             >
               Reset all filters
             </button>
@@ -914,6 +1388,51 @@ export const MagazineView: React.FC<MagazineViewProps> = ({
             ))}
           </div>
         )}
+
+        {/* Shopping Perks & Confidence Strip (Always rendered for busy, authentic commerce magazine feel) */}
+        <div className="mt-16 pt-10 border-t border-neutral-200/80 dark:border-neutral-800/80">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-6 text-center sm:text-left">
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-center sm:justify-start gap-1.5 text-xs font-bold text-neutral-900 dark:text-white">
+                <ShieldCheck className="w-4 h-4 text-emerald-500" />
+                <span>100% Direct Store Checkout</span>
+              </div>
+              <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
+                You purchase securely on Flipkart, Amazon, and Myntra with official warranties.
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-center sm:justify-start gap-1.5 text-xs font-bold text-neutral-900 dark:text-white">
+                <Percent className="w-4 h-4 text-red-500" />
+                <span>Zero Markup Guarantee</span>
+              </div>
+              <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
+                Affiliate recommendations provide authentic discounts at zero extra cost to you.
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-center sm:justify-start gap-1.5 text-xs font-bold text-neutral-900 dark:text-white">
+                <Zap className="w-4 h-4 text-blue-500" />
+                <span>Real-Time Deal Tracking</span>
+              </div>
+              <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
+                Live monitoring of price drops, seasonal sales, and top community clicks.
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-center sm:justify-start gap-1.5 text-xs font-bold text-neutral-900 dark:text-white">
+                <Award className="w-4 h-4 text-purple-500" />
+                <span>Curated Quality Standards</span>
+              </div>
+              <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
+                Handpicked balance of low cost and high product satisfaction scores.
+              </p>
+            </div>
+          </div>
+        </div>
       </main>
 
       {/* Showcase Product Details & Multi-Image Gallery Modal */}

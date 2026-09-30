@@ -19,6 +19,10 @@ import {
 import { 
   getAuth, 
   signInWithPopup, 
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  sendPasswordResetEmail,
+  updateProfile,
   GoogleAuthProvider, 
   signOut,
   onAuthStateChanged,
@@ -1837,6 +1841,99 @@ export const databaseService = {
       console.warn('Google sign-in exception:', authError?.message || err);
       throw err;
     }
+  },
+
+  // Sign in using Email and Password via Firebase Authentication
+  async signInWithEmail(email: string, password: string): Promise<UserProfile> {
+    const cleanEmail = email.trim().toLowerCase();
+    const result = await signInWithEmailAndPassword(auth, cleanEmail, password);
+    const fbUser = result.user;
+    const isAdmin =
+      cleanEmail === 'shivanandkabbur24@gmail.com' ||
+      cleanEmail.includes('admin') ||
+      fbUser.uid === 'DTORVHWkRQRBLp1vS7JfdVIvVBr1';
+
+    const users = getStoredUsers();
+    const existing = users.find(
+      (u) => u.id === fbUser.uid || (u.email && u.email.toLowerCase().trim() === cleanEmail)
+    );
+
+    const userProfile: UserProfile = {
+      id: fbUser.uid,
+      email: fbUser.email || cleanEmail,
+      name: fbUser.displayName || existing?.name || (isAdmin ? 'Shivanand Kabbur' : cleanEmail.split('@')[0]),
+      role: isAdmin ? 'admin' : (existing?.role || 'creator'),
+      avatarUrl: fbUser.photoURL || existing?.avatarUrl || undefined,
+      isTrustedContributor: isAdmin || existing?.isTrustedContributor || false,
+      approvedSubmissionCount: existing?.approvedSubmissionCount || (isAdmin ? 16 : 0),
+      rejectedSubmissionCount: existing?.rejectedSubmissionCount || 0,
+      trustScore: existing?.trustScore || (isAdmin ? 100 : 70),
+      trustedSince: existing?.trustedSince || (isAdmin ? '2026-01-01T00:00:00.000Z' : undefined),
+    };
+
+    this.setCurrentUser(userProfile);
+
+    // Explicitly persist in Firestore users collection so the user is tracked in the database
+    try {
+      const clean = sanitizeFirestoreData(userProfile);
+      await setDoc(doc(db, 'users', fbUser.uid), clean, { merge: true });
+    } catch (err) {
+      console.warn('Firestore user record write notice:', err);
+    }
+
+    return userProfile;
+  },
+
+  // Register a new user using Email and Password via Firebase Authentication
+  async registerWithEmail(email: string, password: string, name: string): Promise<UserProfile> {
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanName = name.trim();
+    const result = await createUserWithEmailAndPassword(auth, cleanEmail, password);
+    const fbUser = result.user;
+
+    // Update display name in Firebase Auth
+    if (cleanName) {
+      try {
+        await updateProfile(fbUser, { displayName: cleanName });
+      } catch (err) {
+        console.warn('Could not update Firebase Auth profile displayName:', err);
+      }
+    }
+
+    const isAdmin =
+      cleanEmail === 'shivanandkabbur24@gmail.com' ||
+      cleanEmail.includes('admin') ||
+      fbUser.uid === 'DTORVHWkRQRBLp1vS7JfdVIvVBr1';
+
+    const userProfile: UserProfile = {
+      id: fbUser.uid,
+      email: fbUser.email || cleanEmail,
+      name: cleanName || cleanEmail.split('@')[0],
+      role: isAdmin ? 'admin' : 'creator',
+      isTrustedContributor: isAdmin,
+      approvedSubmissionCount: isAdmin ? 16 : 0,
+      rejectedSubmissionCount: 0,
+      trustScore: isAdmin ? 100 : 70,
+      trustedSince: isAdmin ? '2026-01-01T00:00:00.000Z' : new Date().toISOString(),
+    };
+
+    this.setCurrentUser(userProfile);
+
+    // Explicitly persist in Firestore users collection so the new user is recorded
+    try {
+      const clean = sanitizeFirestoreData(userProfile);
+      await setDoc(doc(db, 'users', fbUser.uid), clean, { merge: true });
+    } catch (err) {
+      console.warn('Firestore user record write notice:', err);
+    }
+
+    return userProfile;
+  },
+
+  // Send password reset email via Firebase Authentication
+  async sendPasswordReset(email: string): Promise<void> {
+    const cleanEmail = email.trim().toLowerCase();
+    await sendPasswordResetEmail(auth, cleanEmail);
   },
 
   // Sign out

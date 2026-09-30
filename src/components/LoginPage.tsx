@@ -22,8 +22,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onSuccess, onCancel }) => 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setForgotSent(false);
 
-    if (!email || !password) {
+    const cleanEmail = email.trim();
+    if (!cleanEmail || !password) {
       setError('Please fill in all required fields.');
       return;
     }
@@ -46,70 +48,72 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onSuccess, onCancel }) => 
     setLoading(true);
 
     try {
-      await new Promise((r) => setTimeout(r, 300));
-
-      const normalizedEmail = email.trim().toLowerCase();
-      const isOwner =
-        normalizedEmail === 'shivanandkabbur24@gmail.com' ||
-        normalizedEmail.includes('admin');
-
-      // 1. If authenticating as Shivanand Kabbur (Super Admin & Owner)
-      if (isOwner) {
-        const adminUser: UserProfile = {
-          id: 'DTORVHWkRQRBLp1vS7JfdVIvVBr1',
-          email: 'shivanandkabbur24@gmail.com',
-          name: name.trim() || 'Shivanand Kabbur',
-          role: 'admin',
-          isTrustedContributor: true,
-          approvedSubmissionCount: 16,
-          rejectedSubmissionCount: 0,
-          trustScore: 100,
-          trustedSince: '2026-01-01T00:00:00.000Z',
-          avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80',
-        };
-        db.setCurrentUser(adminUser);
-        onSuccess(adminUser);
-        return;
-      }
-
-      // Check existing registered users and database users
-      const allUsers = db.getAllUsers();
-      const matched = allUsers.find(
-        (u) => u.email && u.email.toLowerCase().trim() === normalizedEmail
-      );
-
+      let authenticatedUser: UserProfile;
       if (isRegisterMode) {
-        const newUser: UserProfile = {
-          id: matched?.id || 'usr_' + Date.now(),
-          email: normalizedEmail,
-          name: name.trim() || normalizedEmail.split('@')[0],
-          role: 'creator',
-          isTrustedContributor: matched?.isTrustedContributor || false,
-          trustScore: matched?.trustScore || 70,
-        };
-        db.setCurrentUser(newUser);
-        onSuccess(newUser);
+        authenticatedUser = await db.registerWithEmail(cleanEmail, password, name.trim());
       } else {
-        // Login mode
-        if (matched) {
-          db.setCurrentUser(matched);
-          onSuccess(matched);
-        } else {
-          // Seamlessly provision creator profile without blocking
-          const autoUser: UserProfile = {
-            id: 'usr_' + Date.now(),
-            email: normalizedEmail,
-            name: normalizedEmail.split('@')[0],
-            role: 'creator',
-            trustScore: 75,
-          };
-          db.setCurrentUser(autoUser);
-          onSuccess(autoUser);
-        }
+        authenticatedUser = await db.signInWithEmail(cleanEmail, password);
       }
+      onSuccess(authenticatedUser);
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Authentication failed';
-      setError(message);
+      const authError = err as { code?: string; message?: string };
+      console.warn('Firebase Email Auth exception:', authError?.code, authError?.message);
+
+      if (authError?.code === 'auth/operation-not-allowed') {
+        setError(
+          'Email/Password sign-in is not enabled in Firebase Console. Please open your Firebase Console > Authentication > Sign-in method, and enable "Email/Password".'
+        );
+      } else if (authError?.code === 'auth/user-not-found') {
+        setError('No account found with this email. Please click "Sign up" below to create an account.');
+      } else if (
+        authError?.code === 'auth/wrong-password' ||
+        authError?.code === 'auth/invalid-credential'
+      ) {
+        setError('Incorrect password or invalid email credentials. Please check and try again.');
+      } else if (authError?.code === 'auth/email-already-in-use') {
+        setError('An account with this email address already exists. Please sign in instead.');
+      } else if (authError?.code === 'auth/invalid-email') {
+        setError('Please enter a valid email address.');
+      } else if (authError?.code === 'auth/weak-password') {
+        setError('Password should be at least 6 characters.');
+      } else if (authError?.code === 'auth/too-many-requests') {
+        setError('Too many failed attempts. Access temporarily locked for security. Please try again later.');
+      } else if (authError?.code === 'auth/network-request-failed') {
+        setError('Network connection error. Please check your internet connection and try again.');
+      } else if (authError?.code === 'auth/account-exists-with-different-credential') {
+        setError('An account already exists with this email via Google sign-in. Please continue with Google.');
+      } else {
+        setError(authError?.message || 'Authentication failed. Please verify your email and password.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Forgot password using Firebase Auth
+  const handleForgotPassword = async () => {
+    const cleanEmail = email.trim();
+    if (!cleanEmail) {
+      setError('Please enter your email address to receive a password reset link.');
+      return;
+    }
+    setError('');
+    setForgotSent(false);
+    setLoading(true);
+    try {
+      await db.sendPasswordReset(cleanEmail);
+      setForgotSent(true);
+    } catch (err: unknown) {
+      const authErr = err as { code?: string; message?: string };
+      if (authErr?.code === 'auth/user-not-found') {
+        setError('No registered account was found with this email address.');
+      } else if (authErr?.code === 'auth/invalid-email') {
+        setError('Please enter a valid email address.');
+      } else if (authErr?.code === 'auth/operation-not-allowed') {
+        setError('Password reset is unavailable because Email provider is not enabled in Firebase Console.');
+      } else {
+        setError(authErr?.message || 'Unable to send password reset email. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
@@ -288,7 +292,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onSuccess, onCancel }) => 
                 {!isRegisterMode && (
                   <button
                     type="button"
-                    onClick={() => setForgotSent(true)}
+                    onClick={handleForgotPassword}
                     className="text-[11px] text-[#E8B072] hover:underline cursor-pointer"
                   >
                     Forgot Password?

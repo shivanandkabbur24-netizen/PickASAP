@@ -130,7 +130,7 @@ export const PrivacyPolicyPage: React.FC<PrivacyPolicyPageProps> = ({ currentVie
           </p>
           <div className="text-xs space-y-1 text-neutral-700 dark:text-neutral-300">
             <p><strong>Designation:</strong> Grievance Redressal Officer, PickASAP</p>
-            <p><strong>Email:</strong> <span className="font-mono text-[#FF6E40]">grievance@pickasap.com</span> / <span className="font-mono text-[#FF6E40]">support@pickasap.com</span></p>
+            <p><strong>Email:</strong> <span className="font-mono text-[#FF6E40]">grievance@pickasap.shop</span> / <span className="font-mono text-[#FF6E40]">support@pickasap.shop</span></p>
             <p><strong>Location:</strong> Bangalore, Karnataka, India</p>
             <p><strong>Response Timeline:</strong> Acknowledgement within 48 hours; resolution within 30 days.</p>
           </div>

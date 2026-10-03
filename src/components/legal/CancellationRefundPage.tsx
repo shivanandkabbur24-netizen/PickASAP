@@ -160,7 +160,7 @@ export const CancellationRefundPage: React.FC<CancellationRefundPageProps> = ({
             To request assistance or report a billing discrepancy for a PickASAP platform fee:
           </p>
           <ol className="list-decimal pl-5 space-y-1 text-xs text-neutral-600 dark:text-neutral-400">
-            <li>Email our support desk at <strong className="text-neutral-900 dark:text-white">support@pickasap.com</strong> or use our <button onClick={() => setCurrentView('contact')} className="text-[#FF6E40] hover:underline font-semibold cursor-pointer">Contact Us form</button>.</li>
+            <li>Email our support desk at <strong className="text-neutral-900 dark:text-white">support@pickasap.shop</strong> or use our <button onClick={() => setCurrentView('contact')} className="text-[#FF6E40] hover:underline font-semibold cursor-pointer">Contact Us form</button>.</li>
             <li>Include your <strong>Razorpay Payment ID</strong> (e.g., <code className="font-mono bg-neutral-200 dark:bg-neutral-800 px-1 py-0.5 rounded text-[10px]">pay_...</code>) from your payment confirmation.</li>
             <li>Our billing support team will review and respond within 24 hours.</li>
           </ol>

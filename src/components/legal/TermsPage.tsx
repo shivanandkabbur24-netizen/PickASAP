@@ -148,7 +148,7 @@ export const TermsPage: React.FC<TermsPageProps> = ({ currentView, setCurrentVie
               onClick={() => setCurrentView('contact')}
               className="text-[#FF6E40] hover:underline font-semibold cursor-pointer"
             >
-              support@pickasap.com
+              support@pickasap.shop
             </button>
             {' '}or visit our{' '}
             <button

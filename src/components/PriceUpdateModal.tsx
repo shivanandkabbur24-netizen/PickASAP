@@ -96,7 +96,7 @@ export const PriceUpdateModal: React.FC<PriceUpdateModalProps> = ({
     const actingUser: UserProfile = currentUser || {
       id: 'guest_' + (guestEmail ? guestEmail.replace(/[^a-zA-Z0-9]/g, '_') : Date.now()),
       name: guestName.trim() || 'Community Member',
-      email: guestEmail.trim() || 'community@pickasap.com',
+      email: guestEmail.trim() || 'community@pickasap.shop',
       role: 'user',
       isTrustedContributor: false,
       approvedSubmissionCount: 0,

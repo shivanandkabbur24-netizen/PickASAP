@@ -129,7 +129,7 @@ export const ShippingExchangePage: React.FC<ShippingExchangePageProps> = ({
               Contact Us page
             </button>{' '}
             or email us at{' '}
-            <strong className="text-neutral-900 dark:text-white">support@pickasap.com</strong>.
+            <strong className="text-neutral-900 dark:text-white">support@pickasap.shop</strong>.
           </p>
         </section>
       </main>

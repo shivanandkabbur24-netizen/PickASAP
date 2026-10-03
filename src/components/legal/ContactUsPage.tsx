@@ -87,7 +87,7 @@ export const ContactUsPage: React.FC<ContactUsPageProps> = ({ currentView, setCu
         message: '',
       });
     } catch {
-      setErrorMessage('Failed to submit your message. Please write directly to support@pickasap.com.');
+      setErrorMessage('Failed to submit your message. Please write directly to support@pickasap.shop.');
     } finally {
       setIsSubmitting(false);
     }
@@ -114,10 +114,10 @@ export const ContactUsPage: React.FC<ContactUsPageProps> = ({ currentView, setCu
               Official Email
             </span>
             <a
-              href="mailto:support@pickasap.com"
+              href="mailto:support@pickasap.shop"
               className="font-bold text-sm text-neutral-900 dark:text-white hover:text-[#FF6E40] transition-colors block"
             >
-              support@pickasap.com
+              support@pickasap.shop
             </a>
             <span className="text-[11px] text-neutral-400 block">
               General inquiries &amp; Creator Desk
@@ -290,8 +290,8 @@ export const ContactUsPage: React.FC<ContactUsPageProps> = ({ currentView, setCu
               <div className="space-y-2 text-xs">
                 <div>
                   <span className="text-neutral-500 block text-[11px]">Customer &amp; Creator Support:</span>
-                  <a href="mailto:support@pickasap.com" className="font-medium text-[#FF6E40] hover:underline">
-                    support@pickasap.com
+                  <a href="mailto:support@pickasap.shop" className="font-medium text-[#FF6E40] hover:underline">
+                    support@pickasap.shop
                   </a>
                 </div>
               </div>

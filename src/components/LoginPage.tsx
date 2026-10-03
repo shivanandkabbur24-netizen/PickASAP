@@ -233,8 +233,16 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onSuccess, onCancel }) => 
           )}
 
           {forgotSent && (
-            <div className="mb-6 p-3 rounded-xl bg-amber-950/50 border border-amber-800/60 text-amber-200 text-xs animate-fade-in">
-              Password reset link sent to your email.
+            <div className="mb-6 p-3.5 rounded-xl bg-amber-950/60 border border-amber-800/70 text-amber-200 text-xs space-y-1.5 animate-fade-in">
+              <div className="font-semibold text-amber-300">
+                Password reset requested for {email.trim()}
+              </div>
+              <p className="text-[11.5px] leading-relaxed text-amber-200/90">
+                If an email/password account exists for this address, a reset link was sent. Please check your <strong>Spam / Junk folder</strong> and <strong>Promotions tab</strong> (from <em>noreply@pickasap-c43b0.firebaseapp.com</em>).
+              </p>
+              <p className="text-[11px] text-amber-300/80 pt-1 border-t border-amber-800/50">
+                Note: If you registered via Google, use <strong>Continue with Google</strong> below. If you have not created a password account yet, switch to <strong>Sign up</strong>.
+              </p>
             </div>
           )}
 

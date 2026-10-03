@@ -383,7 +383,7 @@ const SEED_USERS: UserProfile[] = [
   },
   {
     id: 'user_curator_default',
-    email: 'curator@pickasap.com',
+    email: 'curator@pickasap.shop',
     name: 'PickASAP Editorial Curator',
     role: 'creator',
     isTrustedContributor: true,

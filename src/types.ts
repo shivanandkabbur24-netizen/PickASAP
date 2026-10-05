@@ -63,24 +63,37 @@ export interface PriceComparisonData {
   source?: string;
 }
 
+export interface PriceHistoryPoint {
+  date: string;
+  price: number;
+  note?: string;
+  dropPercentage?: string;
+  isLowest?: boolean;
+  isHighest?: boolean;
+}
+
 export interface PriceIntelligenceData {
-  productId?: string;
-  resolvedUrl?: string;
+  productId: string;
+  productName?: string;
   productTitle?: string;
+  resolvedUrl?: string;
   asin?: string;
   currentPrice: number;
-  formattedCurrentPrice: string;
-  lowestPrice: number;
-  formattedLowestPrice: string;
-  highestPrice: number;
-  formattedHighestPrice: string;
-  averagePrice: number;
-  formattedAveragePrice: string;
+  formattedCurrentPrice?: string;
+  lowestPrice?: number;
+  formattedLowestPrice?: string;
+  highestPrice?: number;
+  formattedHighestPrice?: string;
+  averagePrice?: number;
+  formattedAveragePrice?: string;
   specialOfferPrice?: number;
   formattedSpecialOfferPrice?: string;
-  currency: string;
-  summaryNote: string;
-  milestones: PriceMilestone[];
+  currency?: string;
+  summaryNote?: string;
+  isHistoricalDataAvailable?: boolean;
+  uncertaintyNote?: string | null;
+  priceHistory: PriceHistoryPoint[];
+  milestones?: PriceMilestone[];
 }
 
 export interface PriceSubmission {
@@ -110,6 +123,7 @@ export interface Product {
   id: string;
   title: string;
   brand?: string;
+  modelIdentifier?: string;
   description: string;
   editorialNote?: string;
   category: string;

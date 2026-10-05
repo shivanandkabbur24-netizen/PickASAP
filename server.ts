@@ -77,8 +77,8 @@ async function resolveRedirectUrl(inputUrl: string): Promise<{ resolvedUrl: stri
   }
 }
 
-// In-memory cache for Gemini price intelligence to preserve quota and deliver instant responses
-const priceIntelligenceCache = new Map<string, any>();
+// In-memory per-product cache for Gemini price intelligence to preserve quota and ensure product independence
+const priceHistoryCacheByProductId = new Map<string, any>();
 
 function extractJson(text: string): any {
   if (!text) return null;
@@ -100,82 +100,9 @@ function extractJson(text: string): any {
   return null;
 }
 
-// Resilient Price Intelligence Fetcher (falls back instantly to deterministic category price tracker to avoid 503 high-demand spikes)
-async function fetchPriceIntelligenceFromGemini(
-  querySubject: string,
-  resolvedUrl: string,
-  effectiveUrl: string,
-  store: string,
-  currentPriceNum: number
-): Promise<any | null> {
-  const cacheKey = `${querySubject.toLowerCase().trim()}_${currentPriceNum}`;
-  if (priceIntelligenceCache.has(cacheKey)) {
-    return priceIntelligenceCache.get(cacheKey);
-  }
-  // Instantly return null so server uses deterministic offline price history engine without 503 spikes
-  return null;
-}
-
-// Specific verified dataset for Samsung Galaxy S26 Ultra 5G (as requested by user)
-const SAMSUNG_S26_ULTRA_DATA = {
-  productTitle: 'Samsung Galaxy S26 Ultra 5G (Black, 12GB RAM, 256GB Storage)',
-  asin: 'B0GL8FNY5G',
-  currentPrice: 130999,
-  formattedCurrentPrice: '₹1,30,999',
-  lowestPrice: 104999,
-  formattedLowestPrice: '₹1,04,999',
-  specialOfferPrice: 114999,
-  formattedSpecialOfferPrice: '₹1,14,999',
-  highestPrice: 139999,
-  formattedHighestPrice: '₹1,39,999',
-  averagePrice: 124500,
-  formattedAveragePrice: '₹1,24,500',
-  currency: '₹',
-  summaryNote:
-    'Lowest Price Recorded: ₹1,04,999 (landmark sale drop with bank & exchange combo; pre-festive special offers drop to ~₹1,14,999). Average Price: ~₹1,24,500.',
-  milestones: [
-    {
-      date: '2026-09-14',
-      price: 130999,
-      formattedPrice: '₹1,30,999',
-      note: 'Current verified listing price',
-      dropPercentage: '6.4% drop from launch',
-    },
-    {
-      date: '2026-08-20',
-      price: 114999,
-      formattedPrice: '₹1,14,999',
-      note: 'Pre-festive season special bank offer at ₹1,14,999',
-      dropPercentage: '17.8% drop',
-    },
-    {
-      date: '2026-07-02',
-      price: 104999,
-      formattedPrice: '₹1,04,999',
-      note: 'Landmark all-time lowest price recorded during mid-year sale at ₹1,04,999',
-      dropPercentage: '25.0% drop',
-      isLowest: true,
-    },
-    {
-      date: '2026-05-10',
-      price: 129999,
-      formattedPrice: '₹1,29,999',
-      note: 'First major promotional discount',
-      dropPercentage: '7.1% drop',
-    },
-    {
-      date: '2026-02-27',
-      price: 139999,
-      formattedPrice: '₹1,39,999',
-      note: 'Highest recorded price at launch (MRP)',
-      isHighest: true,
-    },
-  ],
-};
-
 // Helper: Parse numeric price from text
 function parsePrice(val: any): number {
-  if (typeof val === 'number' && !isNaN(val)) return val;
+  if (typeof val === 'number' && !isNaN(val)) return Math.round(val);
   if (!val) return 0;
   const cleaned = String(val).replace(/[^0-9.]/g, '');
   const num = parseFloat(cleaned);
@@ -187,98 +114,124 @@ function formatINR(val: number): string {
   return '₹' + val.toLocaleString('en-IN');
 }
 
-// Intelligent category-aware fallback price history generator when Gemini is temporarily offline
-function generateFallbackPriceHistory(
-  productTitle: string,
-  currentPriceNum: number,
-  currency: string = '₹'
-) {
-  const current = currentPriceNum > 0 ? currentPriceNum : 4999;
-  const titleLower = (productTitle || '').toLowerCase();
+// Genuine Product-Specific Price Intelligence Research Engine using Gemini
+async function fetchPriceIntelligenceFromGemini(params: {
+  productId: string;
+  title: string;
+  brand?: string;
+  modelIdentifier?: string;
+  resolvedUrl?: string;
+  effectiveUrl?: string;
+  store?: string;
+  currentPriceNum: number;
+  category?: string;
+  description?: string;
+}): Promise<any | null> {
+  const {
+    productId,
+    title,
+    brand,
+    modelIdentifier,
+    resolvedUrl,
+    effectiveUrl,
+    store,
+    currentPriceNum,
+    category,
+    description,
+  } = params;
 
-  // Category-specific realistic estimation
-  let mrpMultiplier = 1.25;
-  let lowestMultiplier = 0.82;
-  let categoryNote = 'product';
-
-  if (titleLower.includes('tv') || titleLower.includes('qled') || titleLower.includes('oled') || titleLower.includes('smart google tv')) {
-    mrpMultiplier = 1.36;
-    lowestMultiplier = 0.84;
-    categoryNote = 'Smart TV';
-  } else if (titleLower.includes('gas stove') || titleLower.includes('cooker') || titleLower.includes('kitchen') || titleLower.includes('burner')) {
-    mrpMultiplier = 1.78;
-    lowestMultiplier = 0.85;
-    categoryNote = 'Kitchen Appliance';
-  } else if (titleLower.includes('s26') || titleLower.includes('iphone') || titleLower.includes('galaxy') || titleLower.includes('smartphone') || titleLower.includes('5g')) {
-    mrpMultiplier = 1.08;
-    lowestMultiplier = 0.80;
-    categoryNote = 'Flagship Smartphone';
-  } else if (titleLower.includes('headphone') || titleLower.includes('earbuds') || titleLower.includes('audio') || titleLower.includes('soundbar')) {
-    mrpMultiplier = 1.5;
-    lowestMultiplier = 0.75;
-    categoryNote = 'Audio Device';
+  // Each product has its OWN independent cache keyed strictly by productId
+  if (priceHistoryCacheByProductId.has(productId)) {
+    return priceHistoryCacheByProductId.get(productId);
   }
 
-  const highest = Math.round(current * mrpMultiplier);
-  const lowest = Math.round(current * lowestMultiplier);
-  const average = Math.round((current * 1.04 + lowest * 0.96) / 2);
+  let ai: GoogleGenAI;
+  try {
+    ai = getGemini();
+  } catch (err) {
+    console.warn('Gemini client initialization notice:', err);
+    return null;
+  }
 
-  const today = new Date();
-  const d20 = new Date(today.getTime() - 20 * 24 * 60 * 60 * 1000);
-  const d55 = new Date(today.getTime() - 55 * 24 * 60 * 60 * 1000);
-  const d110 = new Date(today.getTime() - 110 * 24 * 60 * 60 * 1000);
-  const d180 = new Date(today.getTime() - 180 * 24 * 60 * 60 * 1000);
+  const systemInstruction = `You are an e-commerce price history research intelligence engine for an online curated shopping platform.
+Your task is to analyze the EXACT product provided and return its independent, product-specific price history dataset.
 
-  return {
-    productTitle: productTitle || 'Verified Product',
-    currentPrice: current,
-    formattedCurrentPrice: `${currency}${current.toLocaleString('en-IN')}`,
-    lowestPrice: lowest,
-    formattedLowestPrice: `${currency}${lowest.toLocaleString('en-IN')}`,
-    highestPrice: highest,
-    formattedHighestPrice: `${currency}${highest.toLocaleString('en-IN')}`,
-    averagePrice: average,
-    formattedAveragePrice: `${currency}${average.toLocaleString('en-IN')}`,
-    currency,
-    summaryNote: `Authentic market trend for this ${categoryNote}: Lowest recorded deal price was ${currency}${lowest.toLocaleString('en-IN')}. The launch MRP was ${currency}${highest.toLocaleString('en-IN')}.`,
-    milestones: [
-      {
-        date: today.toISOString().split('T')[0],
-        price: current,
-        formattedPrice: `${currency}${current.toLocaleString('en-IN')}`,
-        note: 'Current active listing price',
-        dropPercentage: `${Math.round(((highest - current) / highest) * 100)}% drop from MRP`,
-      },
-      {
-        date: d20.toISOString().split('T')[0],
-        price: Math.round(current * 1.03),
-        formattedPrice: `${currency}${Math.round(current * 1.03).toLocaleString('en-IN')}`,
-        note: 'Recent weekend flash price',
-        dropPercentage: `${Math.round(((highest - Math.round(current * 1.03)) / highest) * 100)}% drop`,
-      },
-      {
-        date: d55.toISOString().split('T')[0],
-        price: lowest,
-        formattedPrice: `${currency}${lowest.toLocaleString('en-IN')}`,
-        note: 'Landmark festival deal price (Flipkart/Amazon sale)',
-        dropPercentage: `${Math.round(((highest - lowest) / highest) * 100)}% drop`,
-        isLowest: true,
-      },
-      {
-        date: d110.toISOString().split('T')[0],
-        price: Math.round(average * 1.02),
-        formattedPrice: `${currency}${Math.round(average * 1.02).toLocaleString('en-IN')}`,
-        note: 'Mid-season promotional pricing',
-      },
-      {
-        date: d180.toISOString().split('T')[0],
-        price: highest,
-        formattedPrice: `${currency}${highest.toLocaleString('en-IN')}`,
-        note: 'Original launch MRP on platform',
-        isHighest: true,
-      },
-    ],
-  };
+CRITICAL REQUIREMENTS:
+1. Treat every product as a completely separate and independent research request.
+2. NEVER reuse, copy, scale, transform, randomize, or modify the price-history pattern of another product.
+3. DO NOT use a fixed/template price-history array.
+4. DO NOT generate a generic price curve and simply change the numbers according to the current product price.
+5. DO NOT assume that two different products have the same historical price movement.
+6. The requested historical data must correspond specifically to THAT product, not to a generic product in the same category.
+7. If reliable historical prices cannot be determined, DO NOT fabricate realistic-looking prices just to complete the graph.
+   Instead, return only the historical prices that can be reasonably supported by available information. Set "isHistoricalDataAvailable" to false, provide only the current/initial price point in "priceHistory", and clearly indicate when historical data is unavailable or uncertain in "uncertaintyNote".
+8. The dates must be in YYYY-MM-DD format, sorted chronologically from oldest to newest.
+9. Return structured JSON strictly adhering to the requested format.`;
+
+  const prompt = `Research and return the independent historical price data specifically for this exact product:
+Product ID: "${productId}"
+Product Name: "${title}"
+Brand: "${brand || ''}"
+Model Identifier: "${modelIdentifier || ''}"
+Store / Marketplace: "${store || 'Online'}"
+Product URL: "${resolvedUrl || effectiveUrl || ''}"
+Current Price: ${currentPriceNum}
+Category: "${category || ''}"
+Description: "${(description || '').slice(0, 300)}"
+
+REQUIRED RESPONSE FORMAT:
+{
+  "productId": "${productId}",
+  "productName": "${title.replace(/"/g, '\\"')}",
+  "currentPrice": ${currentPriceNum},
+  "isHistoricalDataAvailable": true,
+  "uncertaintyNote": null,
+  "priceHistory": [
+    {
+      "date": "YYYY-MM-DD",
+      "price": number,
+      "note": "string (e.g. Launch MRP / Landmark sale deal / Festive discount / Current price)"
+    }
+  ],
+  "lowestPrice": number,
+  "highestPrice": number,
+  "averagePrice": number,
+  "summaryNote": "string"
+}`;
+
+  const models = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
+  for (const model of models) {
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents: prompt,
+        config: {
+          systemInstruction,
+          responseMimeType: 'application/json',
+        },
+      });
+
+      const text = response.text;
+      if (text) {
+        const parsed = extractJson(text);
+        if (parsed && typeof parsed === 'object') {
+          parsed.productId = productId;
+          if (!parsed.productName) parsed.productName = title;
+          if (!parsed.currentPrice) parsed.currentPrice = currentPriceNum;
+          if (!Array.isArray(parsed.priceHistory)) parsed.priceHistory = [];
+
+          priceHistoryCacheByProductId.set(productId, parsed);
+          return parsed;
+        }
+      }
+    } catch (err: any) {
+      console.warn(`Gemini price history research attempt with ${model}:`, err?.status || err?.message || err);
+      // Wait briefly before attempting model fallback if temporary 503 spike occurs
+      await new Promise((resolve) => setTimeout(resolve, 600));
+    }
+  }
+
+  return null;
 }
 
 // -------------------------------------------------------------
@@ -306,11 +259,12 @@ app.post('/api/price-history/resolve-url', async (req, res) => {
 
 // Endpoint: Background Gemini Price History Intelligence Engine
 app.post('/api/price-history/fetch', async (req, res) => {
-  const { productId, url, title, store, currentPrice } = req.body;
+  const { productId, url, title, brand, modelIdentifier, store, currentPrice, category, description } = req.body;
 
   const currentPriceNum = parsePrice(currentPrice);
-  const effectiveTitle = (title || '').trim();
+  const effectiveTitle = (title || '').trim() || 'Curated Product';
   const effectiveUrl = (url || '').trim();
+  const effectiveProductId = (productId || '').trim() || `prod_${Date.now()}`;
 
   // 1. Resolve short link if applicable (with fast 1.5s timeout)
   let resolvedUrl = effectiveUrl;
@@ -326,95 +280,131 @@ app.post('/api/price-history/fetch', async (req, res) => {
     }
   }
 
-  const querySubject =
-    effectiveTitle ||
-    detectedTitleFromUrl ||
-    'E-commerce Product';
+  const querySubject = effectiveTitle || detectedTitleFromUrl || 'Curated Product';
 
-  // 2. Fetch price intelligence with automatic multi-model fallback and resilient error handling
+  // 2. Fetch independent product-specific price intelligence from Gemini
   try {
-    const parsedData = await fetchPriceIntelligenceFromGemini(
-      querySubject,
+    const parsedData = await fetchPriceIntelligenceFromGemini({
+      productId: effectiveProductId,
+      title: querySubject,
+      brand,
+      modelIdentifier,
       resolvedUrl,
       effectiveUrl,
       store,
-      currentPriceNum
-    );
+      currentPriceNum,
+      category,
+      description,
+    });
 
-    if (parsedData && (parsedData.currentPrice || parsedData.lowestPrice || (Array.isArray(parsedData.milestones) && parsedData.milestones.length > 0))) {
-      const cur = parsePrice(parsedData.currentPrice) || currentPriceNum;
-      const low = parsePrice(parsedData.lowestPrice) || Math.round(cur * 0.85);
-      const high = parsePrice(parsedData.highestPrice) || Math.round(cur * 1.25);
-      const avg = parsePrice(parsedData.averagePrice) || Math.round((cur + low + high) / 3);
+    if (parsedData && Array.isArray(parsedData.priceHistory) && parsedData.priceHistory.length > 0) {
+      // Clean and sort priceHistory chronologically
+      const validPoints = parsedData.priceHistory
+        .map((p: any) => ({
+          date: p.date || new Date().toISOString().split('T')[0],
+          price: parsePrice(p.price),
+          note: p.note || 'Recorded price point',
+        }))
+        .filter((p: any) => p.price > 0)
+        .sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-      const normalized = {
-        productId,
-        resolvedUrl,
-        productTitle: parsedData.productTitle || querySubject,
-        currentPrice: cur,
-        formattedCurrentPrice: parsedData.formattedCurrentPrice || formatINR(cur),
-        lowestPrice: low,
-        formattedLowestPrice: parsedData.formattedLowestPrice || formatINR(low),
-        highestPrice: high,
-        formattedHighestPrice: parsedData.formattedHighestPrice || formatINR(high),
-        averagePrice: avg,
-        formattedAveragePrice: parsedData.formattedAveragePrice || formatINR(avg),
-        currency: parsedData.currency || '₹',
-        summaryNote: parsedData.summaryNote || `Historical price range spans from ${formatINR(low)} to ${formatINR(high)}.`,
-        milestones: Array.isArray(parsedData.milestones) && parsedData.milestones.length > 0
-          ? parsedData.milestones.map((m: any) => ({
-              date: m.date || new Date().toISOString().split('T')[0],
-              price: parsePrice(m.price),
-              formattedPrice: m.formattedPrice || formatINR(parsePrice(m.price)),
-              note: m.note || 'Recorded price point',
-              dropPercentage: m.dropPercentage,
-              isLowest: parsePrice(m.price) === low,
-              isHighest: parsePrice(m.price) === high,
-            }))
-          : [
-              {
-                date: new Date().toISOString().split('T')[0],
-                price: cur,
-                formattedPrice: formatINR(cur),
-                note: 'Current listed price',
-              },
-              {
-                date: new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0],
-                price: low,
-                formattedPrice: formatINR(low),
-                note: 'Lowest recorded price',
-                isLowest: true,
-              },
-              {
-                date: new Date(Date.now() - 120 * 86400000).toISOString().split('T')[0],
-                price: high,
-                formattedPrice: formatINR(high),
-                note: 'Highest recorded price',
-                isHighest: true,
-              },
-            ],
-      };
+      if (validPoints.length > 0) {
+        const prices = validPoints.map((p: any) => p.price);
+        const low = Math.min(...prices);
+        const high = Math.max(...prices);
+        const avg = Math.round(prices.reduce((sum: number, val: number) => sum + val, 0) / prices.length);
+        const cur = validPoints[validPoints.length - 1].price || currentPriceNum;
 
-      return res.json({
-        success: true,
-        source: 'background_intelligence',
-        data: normalized,
-      });
+        const milestones = validPoints.map((p: any) => ({
+          date: p.date,
+          price: p.price,
+          formattedPrice: formatINR(p.price),
+          note: p.note,
+          dropPercentage: high > p.price ? `${Math.round(((high - p.price) / high) * 100)}% drop` : undefined,
+          isLowest: p.price === low,
+          isHighest: p.price === high,
+        }));
+
+        const isHistoricalAvailable = parsedData.isHistoricalDataAvailable !== false && validPoints.length > 1;
+
+        const normalized = {
+          productId: effectiveProductId,
+          productName: parsedData.productName || querySubject,
+          productTitle: parsedData.productName || querySubject,
+          resolvedUrl,
+          currentPrice: cur,
+          formattedCurrentPrice: formatINR(cur),
+          lowestPrice: low,
+          formattedLowestPrice: formatINR(low),
+          highestPrice: high,
+          formattedHighestPrice: formatINR(high),
+          averagePrice: avg,
+          formattedAveragePrice: formatINR(avg),
+          currency: '₹',
+          isHistoricalDataAvailable: isHistoricalAvailable,
+          uncertaintyNote: isHistoricalAvailable
+            ? null
+            : (parsedData.uncertaintyNote || 'Initial price tracking started with current listing. No prior historical price fluctuations verified.'),
+          summaryNote: parsedData.summaryNote || (isHistoricalAvailable
+            ? `Verified product-specific price trajectory ranging from ${formatINR(low)} to ${formatINR(high)}.`
+            : `Tracking active for ${querySubject} at ${formatINR(cur)}. Real-time price tracking is active.`),
+          priceHistory: validPoints,
+          milestones,
+        };
+
+        return res.json({
+          success: true,
+          source: 'gemini_intelligence',
+          data: normalized,
+        });
+      }
     }
-  } catch {
-    // Non-blocking fallback for quiet, zero-interruption user experience
+  } catch (apiErr) {
+    console.warn('Price history fetch exception:', apiErr);
   }
 
-  // Graceful fallback to maintain zero UI interruption
-  const fallback = generateFallbackPriceHistory(querySubject, currentPriceNum, '₹');
+  // Independent Baseline Fallback: Product has its OWN baseline (the current verified price), with NO fabricated template or shared curve!
+  const todayStr = new Date().toISOString().split('T')[0];
+  const baselinePoint = {
+    date: todayStr,
+    price: currentPriceNum,
+    note: 'Initial verified listing price',
+  };
+
+  const fallbackData = {
+    productId: effectiveProductId,
+    productName: querySubject,
+    productTitle: querySubject,
+    resolvedUrl,
+    currentPrice: currentPriceNum,
+    formattedCurrentPrice: formatINR(currentPriceNum),
+    lowestPrice: currentPriceNum,
+    formattedLowestPrice: formatINR(currentPriceNum),
+    highestPrice: currentPriceNum,
+    formattedHighestPrice: formatINR(currentPriceNum),
+    averagePrice: currentPriceNum,
+    formattedAveragePrice: formatINR(currentPriceNum),
+    currency: '₹',
+    isHistoricalDataAvailable: false,
+    uncertaintyNote: 'Historical price tracking initiated with current listing. Real-time updates will record automatically as prices change.',
+    summaryNote: `Current listing price is ${formatINR(currentPriceNum)}. Real-time tracking is active.`,
+    priceHistory: [baselinePoint],
+    milestones: [
+      {
+        date: todayStr,
+        price: currentPriceNum,
+        formattedPrice: formatINR(currentPriceNum),
+        note: 'Initial verified listing price',
+        isLowest: true,
+        isHighest: true,
+      },
+    ],
+  };
+
   return res.json({
     success: true,
-    source: 'category_price_intelligence',
-    data: {
-      productId,
-      resolvedUrl,
-      ...fallback,
-    },
+    source: 'product_baseline',
+    data: fallbackData,
   });
 });
 

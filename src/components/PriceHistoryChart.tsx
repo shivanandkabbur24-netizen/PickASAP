@@ -28,6 +28,8 @@ interface PriceHistoryChartProps {
   product?: {
     id: string;
     title: string;
+    brand?: string;
+    modelIdentifier?: string;
     affiliateUrl?: string;
     productUrl?: string;
     store?: string;
@@ -35,6 +37,8 @@ interface PriceHistoryChartProps {
     currentPrice?: number;
     originalPrice?: string;
     mrp?: string;
+    category?: string;
+    description?: string;
   };
   currentPrice?: number;
   currency?: string;
@@ -56,11 +60,13 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
   const [timeRange, setTimeRange] = useState<'30d' | '90d' | 'all'>('all');
   const [intelligence, setIntelligence] = useState<PriceIntelligenceData | null>(() => {
     const cached = getCachedPriceIntelligence(productId);
-    if (cached) return cached;
+    if (cached && cached.productId === productId) return cached;
     if (product) {
       return generateClientPriceHistory({
         id: productId,
         title: product.title || '',
+        brand: product.brand,
+        modelIdentifier: product.modelIdentifier,
         price: product.price,
         currentPrice: currentPrice || product.currentPrice,
         mrp: product.mrp || product.originalPrice,
@@ -83,6 +89,8 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
     const prodPayload = {
       id: productId,
       title: product?.title || '',
+      brand: product?.brand,
+      modelIdentifier: product?.modelIdentifier,
       affiliateUrl: product?.affiliateUrl,
       productUrl: product?.productUrl,
       store: product?.store,
@@ -90,6 +98,8 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
       currentPrice: currentPrice || product?.currentPrice,
       mrp: product?.mrp || product?.originalPrice,
       originalPrice: product?.originalPrice,
+      category: product?.category,
+      description: product?.description,
     };
 
     try {
@@ -120,6 +130,8 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
     const prodPayload = {
       id: productId,
       title: product?.title || '',
+      brand: product?.brand,
+      modelIdentifier: product?.modelIdentifier,
       affiliateUrl: product?.affiliateUrl,
       productUrl: product?.productUrl,
       store: product?.store,
@@ -127,6 +139,8 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
       currentPrice: currentPrice || product?.currentPrice,
       mrp: product?.mrp || product?.originalPrice,
       originalPrice: product?.originalPrice,
+      category: product?.category,
+      description: product?.description,
     };
 
     fetchBackgroundPriceHistory(prodPayload)
@@ -173,33 +187,21 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
     );
   }, [snapshots]);
 
-  // Determine effective snapshots with automatic fallback to verified milestones
-  // so the chart immediately displays the actual price trajectory curve and NEVER a flat line
+  // Determine effective snapshots strictly from THIS product's verified dataset
+  // NEVER use a shared template or fabricated wave curve
   const effectiveSnapshots = useMemo(() => {
-    // 1. If background Gemini price intelligence has milestones, use them as authoritative
-    const intel =
-      intelligence ||
-      getCachedPriceIntelligence(productId) ||
-      (product
-        ? generateClientPriceHistory({
-            id: productId,
-            title: product.title || '',
-            price: product.price,
-            currentPrice: currentPrice || product.currentPrice,
-            mrp: product.mrp || product.originalPrice,
-            originalPrice: product.originalPrice,
-            store: product.store,
-          })
-        : null);
+    const intel = intelligence || getCachedPriceIntelligence(productId);
 
-    if (intel?.milestones && intel.milestones.length > 0) {
-      const milestoneSnaps: PriceSnapshot[] = intel.milestones.map((m, idx) => ({
-        id: `snap_intel_${productId}_${idx}_${new Date(m.date).getTime()}`,
+    // 1. If Gemini price intelligence has verified historical points for THIS specific product with variance:
+    const intelPoints = intel?.priceHistory && intel.priceHistory.length > 0 ? intel.priceHistory : intel?.milestones;
+    if (intel?.isHistoricalDataAvailable && Array.isArray(intelPoints) && intelPoints.length > 1) {
+      const milestoneSnaps: PriceSnapshot[] = intelPoints.map((m: any, idx: number) => ({
+        id: `snap_hist_${productId}_${idx}_${new Date(m.date).getTime()}`,
         productId,
         price: m.price,
         recordedAt: new Date(m.date).toISOString(),
         source: 'background_intelligence',
-        note: m.note,
+        note: m.note || 'Recorded verified price',
         dropPercentage: m.dropPercentage,
       }));
 
@@ -208,17 +210,18 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
       );
     }
 
-    // 2. Check if sortedSnapshots has multiple entries with actual price variance
-    const hasVariance =
-      sortedSnapshots.length > 1 &&
-      Math.max(...sortedSnapshots.map((s) => s.price)) > Math.min(...sortedSnapshots.map((s) => s.price));
-
-    if (hasVariance) {
-      return sortedSnapshots;
+    // 2. Check if sortedSnapshots (e.g. from user/community/admin price updates) has multiple entries with actual variance
+    if (sortedSnapshots.length > 1) {
+      const hasVariance =
+        Math.max(...sortedSnapshots.map((s) => s.price)) > Math.min(...sortedSnapshots.map((s) => s.price));
+      if (hasVariance) {
+        return sortedSnapshots;
+      }
     }
 
+    // 3. If there is only 1 baseline snapshot or no verified variance, return sortedSnapshots (which has the 1 baseline)
     return sortedSnapshots;
-  }, [sortedSnapshots, intelligence, product, productId, currentPrice]);
+  }, [sortedSnapshots, intelligence, productId]);
 
   // Format date nicely
   const formatDate = (isoOrDateStr: string | number) => {
@@ -411,10 +414,27 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
     return { points, pathD, areaD, gridYValues, minPrice, maxPrice };
   }, [timelinePoints, timeBounds]);
 
-  // All recorded milestones
+  // All recorded milestones for THIS specific product
   const allMilestones: PriceMilestone[] = useMemo(() => {
-    if (intelligence?.milestones && intelligence.milestones.length > 0) {
-      return intelligence.milestones;
+    const intelPoints = intelligence?.priceHistory;
+    if (intelligence?.isHistoricalDataAvailable && Array.isArray(intelPoints) && intelPoints.length > 0) {
+      const highestPrice = Math.max(...intelPoints.map((s) => s.price));
+      const lowestPrice = Math.min(...intelPoints.map((s) => s.price));
+
+      return [...intelPoints]
+        .reverse()
+        .map((s) => ({
+          date: s.date,
+          price: s.price,
+          formattedPrice: formatPriceDisplay(s.price, currency),
+          note: s.note || 'Recorded price point',
+          dropPercentage:
+            highestPrice > s.price
+              ? `${Math.round(((highestPrice - s.price) / highestPrice) * 100)}% drop`
+              : undefined,
+          isLowest: s.price === lowestPrice,
+          isHighest: s.price === highestPrice,
+        }));
     }
 
     if (effectiveSnapshots.length > 0) {
@@ -461,17 +481,25 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
       {/* Header with Title, Tag, and Range Toggle */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <BarChart3 className="w-4 h-4 text-[#FF6E40]" />
             <h3 className="text-base sm:text-lg font-serif font-bold text-neutral-900 dark:text-white tracking-tight">
               Verified Price History & Milestones
             </h3>
-            <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-[#FF6E40]/10 text-[#FF6E40] border border-[#FF6E40]/20">
-              Live Intelligence
-            </span>
+            {intelligence?.isHistoricalDataAvailable && (intelligence.priceHistory?.length || 0) > 1 ? (
+              <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
+                <Sparkles className="w-3 h-3 text-emerald-500 shrink-0" />
+                Gemini AI Researched
+              </span>
+            ) : (
+              <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-[#FF6E40]/10 text-[#FF6E40] border border-[#FF6E40]/20 flex items-center gap-1">
+                <ShieldCheck className="w-3 h-3 text-[#FF6E40] shrink-0" />
+                Independent Tracking
+              </span>
+            )}
           </div>
           <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-            Historical price observations and landmark deal drops tracked from merchant listings.
+            Independent price history dataset tracked specifically for Product ID: <span className="font-mono text-neutral-600 dark:text-neutral-300">{productId}</span>
           </p>
         </div>
 
@@ -485,7 +513,7 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
             title="Fetch latest verified price trends"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin text-[#FF6E40]' : 'text-neutral-500'}`} />
-            <span>{refreshing ? 'Updating...' : 'Sync History'}</span>
+            <span>{refreshing ? 'Researching...' : 'Sync History'}</span>
           </button>
 
           {isAdmin && onAdminUpdateClick && (
@@ -500,7 +528,7 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
           )}
 
           {/* Time range buttons */}
-          {(snapshots.length > 0 || (intelligence?.milestones && intelligence.milestones.length > 0)) && (
+          {effectiveSnapshots.length > 1 && (
             <div className="inline-flex rounded-lg bg-neutral-200/70 dark:bg-neutral-800/80 p-0.5 text-xs font-medium text-neutral-600 dark:text-neutral-300">
               <button
                 id="range-30d-btn"
@@ -661,33 +689,39 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
       )}
 
       {/* Case A: Single Snapshot / Baseline State */}
-      {!loading && snapshots.length <= 1 && !chartData && (
+      {!loading && effectiveSnapshots.length <= 1 && !chartData && (
         <div
           id="single-snapshot-state"
           className="p-5 sm:p-6 bg-white dark:bg-neutral-900/60 rounded-xl border border-neutral-200/80 dark:border-neutral-800 text-center"
         >
-          <div className="w-10 h-10 mx-auto rounded-full bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 flex items-center justify-center text-amber-600 dark:text-amber-400 mb-3">
-            <Clock className="w-5 h-5" />
+          <div className="w-10 h-10 mx-auto rounded-full bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 flex items-center justify-center text-emerald-600 dark:text-emerald-400 mb-3">
+            <ShieldCheck className="w-5 h-5" />
           </div>
           <h4 className="text-sm sm:text-base font-semibold text-neutral-800 dark:text-neutral-200">
-            Price history will appear as more price updates are recorded.
+            Independent Price Tracking Active
           </h4>
           <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 max-w-md mx-auto">
-            Currently tracking baseline price observation. Whenever an administrator or editor records a verified deal or price change, a chronological trend line will automatically populate here.
+            {intelligence?.uncertaintyNote ||
+              'Currently tracking verified listing price. Gemini AI confirmed no prior price fluctuations have been officially recorded for this specific product. A chronological trend graph will dynamically appear as price adjustments occur.'}
           </p>
 
-          <div className="mt-4 inline-flex items-center gap-4 bg-neutral-100 dark:bg-neutral-800 px-4 py-2 rounded-lg text-xs font-medium text-neutral-700 dark:text-neutral-300">
+          <div className="mt-4 inline-flex flex-wrap items-center justify-center gap-3 bg-neutral-100 dark:bg-neutral-800/80 px-4 py-2 rounded-lg text-xs font-medium text-neutral-700 dark:text-neutral-300">
             <span className="flex items-center gap-1.5">
               <Tag className="w-3.5 h-3.5 text-[#FF6E40]" />
-              Initial Recorded Price:{' '}
+              Tracked Price:{' '}
               <strong className="text-neutral-900 dark:text-white">
-                {formatPriceDisplay(stats.lowest, currency)}
+                {formatPriceDisplay(stats.current || stats.lowest, currency)}
               </strong>
             </span>
             <span className="hidden sm:inline text-neutral-300 dark:text-neutral-600">|</span>
             <span className="flex items-center gap-1.5 text-neutral-500 dark:text-neutral-400">
               <Calendar className="w-3.5 h-3.5" />
-              {formatDate(stats.lastUpdated)}
+              Tracking Active Since: {formatDate(stats.lastUpdated)}
+            </span>
+            <span className="hidden sm:inline text-neutral-300 dark:text-neutral-600">|</span>
+            <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              Authentic Product Dataset
             </span>
           </div>
         </div>

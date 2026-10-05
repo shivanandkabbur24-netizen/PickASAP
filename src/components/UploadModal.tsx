@@ -45,6 +45,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   const isSubmittingRef = useRef(false);
 
   const [title, setTitle] = useState('');
+  const [brand, setBrand] = useState('');
   const [affiliateUrl, setAffiliateUrl] = useState('');
   const [store, setStore] = useState<StoreType>('Amazon');
   const [category, setCategory] = useState<CategoryType>('Tech & Audio');
@@ -326,6 +327,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       const newProduct: Product = {
         id: 'prod_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
         title: title.trim(),
+        brand: brand.trim() || undefined,
         description: editorialNote.trim() || `Curated recommendation by ${user.name || 'Curator'}`,
         editorialNote: editorialNote.trim() || undefined,
         category,
@@ -362,6 +364,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
 
       // Reset fields
       setTitle('');
+      setBrand('');
       setAffiliateUrl('');
       setOriginalPrice('');
       setEditorialNote('');
@@ -675,29 +678,44 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             />
           </div>
 
-          {/* Product Title */}
-          <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-700 dark:text-neutral-300 mb-2">
-              Product Title *
-            </label>
-            <input
-              id="product-title-input"
-              type="text"
-              value={title}
-              onChange={(e) => {
-                const val = e.target.value;
-                setTitle(val);
-                if (!originalPrice.trim()) {
-                  const detected = extractPriceFromText(val);
-                  if (detected) {
-                    setOriginalPrice(detected);
+          {/* Product Title & Brand */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="sm:col-span-2">
+              <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-700 dark:text-neutral-300 mb-2">
+                Product Title *
+              </label>
+              <input
+                id="product-title-input"
+                type="text"
+                value={title}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setTitle(val);
+                  if (!originalPrice.trim()) {
+                    const detected = extractPriceFromText(val);
+                    if (detected) {
+                      setOriginalPrice(detected);
+                    }
                   }
-                }
-              }}
-              placeholder="e.g., Sony WH-1000XM5 Wireless Headphones"
-              className="w-full px-4 py-3 rounded-xl border border-neutral-200 dark:border-neutral-700 bg-neutral-50/50 dark:bg-neutral-900/60 text-sm focus:outline-none focus:border-amber-500 dark:focus:border-amber-500 transition-colors"
-              required
-            />
+                }}
+                placeholder="e.g., Sony WH-1000XM5 Wireless Headphones"
+                className="w-full px-4 py-3 rounded-xl border border-neutral-200 dark:border-neutral-700 bg-neutral-50/50 dark:bg-neutral-900/60 text-sm focus:outline-none focus:border-amber-500 dark:focus:border-amber-500 transition-colors"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-700 dark:text-neutral-300 mb-2">
+                Brand (Optional)
+              </label>
+              <input
+                id="product-brand-input"
+                type="text"
+                value={brand}
+                onChange={(e) => setBrand(e.target.value)}
+                placeholder="e.g., Sony, Samsung"
+                className="w-full px-4 py-3 rounded-xl border border-neutral-200 dark:border-neutral-700 bg-neutral-50/50 dark:bg-neutral-900/60 text-sm focus:outline-none focus:border-amber-500 dark:focus:border-amber-500 transition-colors"
+              />
+            </div>
           </div>
 
           {/* Affiliate URL & Store Selection */}

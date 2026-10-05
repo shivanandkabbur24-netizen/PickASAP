@@ -188,7 +188,7 @@ const STORAGE_PRODUCTS = 'pickasap_products_v1';
 const STORAGE_CLICKS = 'pickasap_clicks_v1';
 const STORAGE_USER = 'pickasap_current_user_v2';
 const STORAGE_FAVORITES = 'pickasap_favorites_v1';
-const STORAGE_PRICE_HISTORY_PREFIX = 'pickasap_price_history_v1_';
+const STORAGE_PRICE_HISTORY_PREFIX = 'pickasap_price_history_v2_';
 
 export const getStoredPriceHistory = (productId: string): PriceSnapshot[] => {
   // 1. Try reading stored snapshots from localStorage
@@ -197,9 +197,11 @@ export const getStoredPriceHistory = (productId: string): PriceSnapshot[] => {
     if (raw) {
       const list = JSON.parse(raw);
       if (Array.isArray(list) && list.length > 0) {
-        // If the stored snapshots are NOT the legacy identical auto-generated items, return them
-        const isLegacyFakeInit = list.every((s: PriceSnapshot) => s.id && s.id.startsWith('snap_init_'));
-        if (!isLegacyFakeInit) {
+        // Discard any old legacy fake generic curve snapshots
+        const hasLegacyGenericFake = list.some((s: PriceSnapshot) =>
+          s.id && (s.id.startsWith('snap_intel_') || s.note?.includes('Recent weekend price point') || s.note?.includes('Mid-season promotional pricing'))
+        );
+        if (!hasLegacyGenericFake) {
           return list;
         }
       }
@@ -208,19 +210,25 @@ export const getStoredPriceHistory = (productId: string): PriceSnapshot[] => {
     console.warn('Price history storage read notice:', e);
   }
 
-  // 2. Check if background Gemini price intelligence has already cached milestones
+  // 2. Check if background Gemini price intelligence has already cached product-specific points
   try {
-    const intelRaw = localStorage.getItem(`pickasap_price_intel_${productId}`);
+    const intelRaw =
+      localStorage.getItem(`pickasap_price_intel_v2_${productId}`) ||
+      localStorage.getItem(`pickasap_price_intel_${productId}`);
     if (intelRaw) {
       const intel = JSON.parse(intelRaw);
-      if (Array.isArray(intel?.milestones) && intel.milestones.length > 0) {
-        const converted: PriceSnapshot[] = intel.milestones.map((m: any, idx: number) => ({
-          id: `snap_intel_${productId}_${idx}_${new Date(m.date).getTime()}`,
+      const points = Array.isArray(intel?.priceHistory) && intel.priceHistory.length > 0
+        ? intel.priceHistory
+        : Array.isArray(intel?.milestones) ? intel.milestones : [];
+
+      if (intel?.isHistoricalDataAvailable && points.length > 1) {
+        const converted: PriceSnapshot[] = points.map((m: any, idx: number) => ({
+          id: `snap_hist_${productId}_${idx}_${new Date(m.date).getTime()}`,
           productId,
           price: m.price,
           recordedAt: new Date(m.date).toISOString(),
           source: 'background_intelligence',
-          note: m.note + (m.dropPercentage ? ` (${m.dropPercentage})` : ''),
+          note: m.note || 'Recorded verified price',
           dropPercentage: m.dropPercentage,
         }));
         converted.sort((a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime());
@@ -240,12 +248,12 @@ export const getStoredPriceHistory = (productId: string): PriceSnapshot[] => {
     if (current > 0) {
       const initialSnapshot: PriceSnapshot[] = [
         {
-          id: `snap_live_${productId}_${Date.now()}`,
+          id: `snap_init_${productId}`,
           productId,
           price: current,
-          recordedAt: new Date().toISOString(),
-          source: 'admin_verified',
-          note: 'Current verified price point',
+          recordedAt: product.createdAt || new Date().toISOString(),
+          source: 'initial',
+          note: 'Initial verified price point',
         },
       ];
       return initialSnapshot;

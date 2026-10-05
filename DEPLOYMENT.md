@@ -32,6 +32,7 @@ npm run deploy:cloudflare
 Cloudflare will prompt you to create or link the project `pickasap` and deploy the `dist/` directory directly.
 
 ### Crucial Cloudflare Configuration Files Included:
+- `functions/api/price-history/fetch.ts`: Native Cloudflare Pages serverless function that automatically runs on Cloudflare Workers edge runtime to serve the `/api/price-history/fetch` background intelligence endpoint with 0ms cold starts.
 - `wrangler.jsonc`: Configured with `"assets": { "directory": "./dist", "not_found_handling": "single-page-application" }` to natively route SPA URLs to `index.html` without needing `_redirects` (which Cloudflare rejects due to infinite loop detection code 100324).
 - `public/_headers`: Enforces browser caching on hashed bundles in `/assets/` and prevents stale caching on `index.html`.
 - `.nvmrc` & `.node-version`: Pin Node 20 to satisfy Vite and dependencies.

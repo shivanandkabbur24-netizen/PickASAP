@@ -151,6 +151,8 @@ export interface Product {
   createdAt: string;
   clicksCount: number;
   monthlyClicks?: Record<string, number>;
+  priceHistory?: PriceHistoryPoint[];
+  priceIntelligence?: PriceIntelligenceData;
 }
 
 export interface ClickRecord {

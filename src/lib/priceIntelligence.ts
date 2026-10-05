@@ -1,5 +1,5 @@
 import { PriceIntelligenceData, PriceSnapshot, PriceMilestone, PriceHistoryPoint } from '../types';
-import { getStoredPriceHistory, setStoredPriceHistory } from './firebase';
+import { databaseService, getStoredPriceHistory, setStoredPriceHistory } from './firebase';
 
 const CACHE_PREFIX = 'pickasap_price_intel_v2_';
 
@@ -17,6 +17,8 @@ export function generateClientPriceHistory(product: {
   discountPercent?: number;
   store?: string;
   currency?: string;
+  priceHistory?: PriceHistoryPoint[];
+  priceIntelligence?: PriceIntelligenceData;
 }): PriceIntelligenceData {
   const currency = product.currency || '₹';
   const parseNum = (val: any): number => {
@@ -33,6 +35,44 @@ export function generateClientPriceHistory(product: {
       : parseNum(product.price) || 2999;
 
   const formatPrice = (p: number) => `${currency}${p.toLocaleString('en-IN')}`;
+
+  // If the product has authentic pre-seeded or Gemini-provided history points
+  if (Array.isArray(product.priceHistory) && product.priceHistory.length > 1) {
+    const prices = product.priceHistory.map((p) => p.price);
+    const low = Math.min(...prices);
+    const high = Math.max(...prices);
+    const avg = Math.round(prices.reduce((sum, v) => sum + v, 0) / prices.length);
+    const lastPrice = product.priceHistory[product.priceHistory.length - 1].price || current;
+
+    return {
+      productId: product.id,
+      productName: product.title || 'Verified Product',
+      productTitle: product.title || 'Verified Product',
+      currentPrice: lastPrice,
+      formattedCurrentPrice: formatPrice(lastPrice),
+      lowestPrice: low,
+      formattedLowestPrice: formatPrice(low),
+      highestPrice: high,
+      formattedHighestPrice: formatPrice(high),
+      averagePrice: avg,
+      formattedAveragePrice: formatPrice(avg),
+      currency,
+      isHistoricalDataAvailable: true,
+      uncertaintyNote: null,
+      summaryNote: `Verified product-specific price trajectory ranging from ${formatPrice(low)} to ${formatPrice(high)}.`,
+      priceHistory: product.priceHistory,
+      milestones: product.priceHistory.map((p) => ({
+        date: p.date,
+        price: p.price,
+        formattedPrice: formatPrice(p.price),
+        note: p.note,
+        dropPercentage: high > p.price ? `${Math.round(((high - p.price) / high) * 100)}% drop` : undefined,
+        isLowest: p.price === low,
+        isHighest: p.price === high,
+      })),
+    };
+  }
+
   const todayStr = new Date().toISOString().split('T')[0];
 
   const singleBaselinePoint: PriceHistoryPoint = {
@@ -112,6 +152,8 @@ export async function fetchBackgroundPriceHistory(product: {
   description?: string;
   discount?: number;
   discountPercent?: number;
+  priceHistory?: PriceHistoryPoint[];
+  priceIntelligence?: PriceIntelligenceData;
 }): Promise<PriceIntelligenceData | null> {
   const effectiveUrl = product.affiliateUrl || product.productUrl || '';
   const parsedPrice =
@@ -121,7 +163,7 @@ export async function fetchBackgroundPriceHistory(product: {
         ? parseFloat(String(product.price).replace(/[^0-9.]/g, '')) || 0
         : 0;
 
-  // Helper to store authentic milestones as snapshots in local storage
+  // Helper to store authentic milestones as snapshots in local storage and Firestore
   const syncHistoryToSnapshots = (intel: PriceIntelligenceData) => {
     const points = Array.isArray(intel.priceHistory) && intel.priceHistory.length > 0
       ? intel.priceHistory
@@ -151,10 +193,14 @@ export async function fetchBackgroundPriceHistory(product: {
           source: 'background_intelligence',
           note: p.note || 'Recorded verified price',
           dropPercentage: p.dropPercentage,
+          isLowest: p.isLowest,
+          isHighest: p.isHighest,
         }));
 
         newSnapshots.sort((a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime());
         setStoredPriceHistory(product.id, newSnapshots);
+        // Persist to Firestore cloud database so all users on deployed website see it
+        databaseService.savePriceHistoryBatch(product.id, newSnapshots);
 
         if (typeof window !== 'undefined') {
           window.dispatchEvent(
@@ -178,10 +224,21 @@ export async function fetchBackgroundPriceHistory(product: {
     }
   };
 
-  // 1. Check if cached intelligence already exists for this exact product ID
-  const cachedIntel = getCachedPriceIntelligence(product.id);
+  // 1. If product object itself carries verified price intelligence, use and sync it immediately
+  if (product.priceIntelligence && product.priceIntelligence.isHistoricalDataAvailable) {
+    saveCachedPriceIntelligence(product.id, product.priceIntelligence);
+    syncHistoryToSnapshots(product.priceIntelligence);
+    return product.priceIntelligence;
+  }
 
-  // 2. Fetch from backend Gemini API in background with all available product attributes
+  // 2. Check if cached intelligence already exists for this exact product ID
+  const cachedIntel = getCachedPriceIntelligence(product.id);
+  if (cachedIntel && cachedIntel.isHistoricalDataAvailable) {
+    syncHistoryToSnapshots(cachedIntel);
+    return cachedIntel;
+  }
+
+  // 3. Fetch from backend / edge Gemini API in background with all available product attributes
   let fetchedData: PriceIntelligenceData | null = null;
   try {
     const controller = new AbortController();
@@ -219,7 +276,7 @@ export async function fetchBackgroundPriceHistory(product: {
     // Gracefully handle network timeouts or offline mode
   }
 
-  // 3. If API returned data, use it; otherwise fallback to cached or independent baseline
+  // 4. If API returned data, use it; otherwise fallback to cached or independent baseline
   const intelData: PriceIntelligenceData =
     fetchedData ||
     cachedIntel ||

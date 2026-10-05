@@ -62,6 +62,9 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
     const cached = getCachedPriceIntelligence(productId);
     if (cached && cached.productId === productId) return cached;
     if (product) {
+      if (product.priceIntelligence && product.priceIntelligence.isHistoricalDataAvailable) {
+        return product.priceIntelligence;
+      }
       return generateClientPriceHistory({
         id: productId,
         title: product.title || '',
@@ -72,6 +75,8 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
         mrp: product.mrp || product.originalPrice,
         originalPrice: product.originalPrice,
         store: product.store,
+        priceHistory: product.priceHistory,
+        priceIntelligence: product.priceIntelligence,
       });
     }
     return null;
@@ -100,6 +105,8 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
       originalPrice: product?.originalPrice,
       category: product?.category,
       description: product?.description,
+      priceHistory: product?.priceHistory,
+      priceIntelligence: product?.priceIntelligence,
     };
 
     try {
@@ -141,6 +148,8 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
       originalPrice: product?.originalPrice,
       category: product?.category,
       description: product?.description,
+      priceHistory: product?.priceHistory,
+      priceIntelligence: product?.priceIntelligence,
     };
 
     fetchBackgroundPriceHistory(prodPayload)
@@ -206,6 +215,25 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
       }));
 
       return milestoneSnaps.sort(
+        (a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime()
+      );
+    }
+
+    // 2. If product object itself carries authentic historical points
+    if (Array.isArray(product?.priceHistory) && product.priceHistory.length > 1) {
+      const prodSnaps: PriceSnapshot[] = product.priceHistory.map((m: any, idx: number) => ({
+        id: `snap_hist_${productId}_${idx}_${new Date(m.date).getTime()}`,
+        productId,
+        price: m.price,
+        recordedAt: new Date(m.date).toISOString(),
+        source: 'background_intelligence',
+        note: m.note || 'Recorded verified price',
+        dropPercentage: m.dropPercentage,
+        isLowest: m.isLowest,
+        isHighest: m.isHighest,
+      }));
+
+      return prodSnaps.sort(
         (a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime()
       );
     }

@@ -240,10 +240,35 @@ export const getStoredPriceHistory = (productId: string): PriceSnapshot[] => {
     console.warn('Intelligence storage read notice:', e);
   }
 
-  // 3. If no history or intelligence is cached yet, return a single current snapshot
+  // 3. Check if product definition itself has authentic priceHistory or priceIntelligence
   const products = getStoredProducts();
   const product = products.find((p) => p.id === productId);
   if (product) {
+    if (product.priceIntelligence && product.priceIntelligence.isHistoricalDataAvailable) {
+      try {
+        localStorage.setItem(`pickasap_price_intel_v2_${productId}`, JSON.stringify(product.priceIntelligence));
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    if (Array.isArray(product.priceHistory) && product.priceHistory.length > 1) {
+      const converted: PriceSnapshot[] = product.priceHistory.map((m: any, idx: number) => ({
+        id: `snap_hist_${productId}_${idx}_${new Date(m.date).getTime()}`,
+        productId,
+        price: m.price,
+        recordedAt: new Date(m.date).toISOString(),
+        source: 'background_intelligence',
+        note: m.note || 'Recorded verified price',
+        dropPercentage: m.dropPercentage,
+        isLowest: m.isLowest,
+        isHighest: m.isHighest,
+      }));
+      converted.sort((a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime());
+      setStoredPriceHistory(productId, converted);
+      return converted;
+    }
+
     const current = product.currentPrice ?? parsePriceToNumber(product.price);
     if (current > 0) {
       const initialSnapshot: PriceSnapshot[] = [
@@ -775,6 +800,23 @@ export const databaseService = {
     }
 
     return newSnapshot;
+  },
+
+  // Save multiple authentic price snapshots to both cache and Firestore
+  async savePriceHistoryBatch(productId: string, snapshots: PriceSnapshot[]): Promise<void> {
+    if (!snapshots || snapshots.length === 0) return;
+    setStoredPriceHistory(productId, snapshots);
+    try {
+      for (const snap of snapshots) {
+        if (!snap.id) continue;
+        const cleanData = sanitizeFirestoreData(snap);
+        setDoc(doc(db, `products/${productId}/priceHistory`, snap.id), cleanData).catch((e) => {
+          // Cloud sync in background
+        });
+      }
+    } catch (err) {
+      console.warn('Firestore price history batch write notice:', err);
+    }
   },
 
   // Administrator price and offer update

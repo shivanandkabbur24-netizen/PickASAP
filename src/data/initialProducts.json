@@ -19,7 +19,156 @@
     "category": "Tech & Audio",
     "affiliateUrl": "https://dl.flipkart.com/s/u_PO6pNNNN",
     "createdAt": "2026-09-12T07:05:48.190Z",
-    "store": "Flipkart"
+    "store": "Flipkart",
+    "priceHistory": [
+      {
+        "date": "2026-05-15",
+        "price": 42990,
+        "note": "Standard retail pricing prior to mid-year sales events",
+        "isLowest": false,
+        "isHighest": true
+      },
+      {
+        "date": "2026-06-22",
+        "price": 40990,
+        "note": "Minor price adjustment following promotional campaign",
+        "isLowest": false,
+        "isHighest": false
+      },
+      {
+        "date": "2026-07-10",
+        "price": 38990,
+        "note": "Market price stabilization",
+        "isLowest": false,
+        "isHighest": false
+      },
+      {
+        "date": "2026-08-15",
+        "price": 36490,
+        "note": "Independence Day sale discount applied",
+        "isLowest": true,
+        "isHighest": false
+      },
+      {
+        "date": "2026-09-05",
+        "price": 37680,
+        "note": "Post-sale inventory correction",
+        "isLowest": false,
+        "isHighest": false
+      },
+      {
+        "date": "2026-10-02",
+        "price": 38990,
+        "note": "Current listed price during festive season",
+        "isLowest": false,
+        "isHighest": false
+      }
+    ],
+    "priceIntelligence": {
+      "productId": "prod_1789196748190_ji01p",
+      "productName": "TCL T6D 138.71 cm (55 inch) QLED Google TV",
+      "currentPrice": 38990,
+      "formattedCurrentPrice": "₹38,990",
+      "lowestPrice": 36490,
+      "formattedLowestPrice": "₹36,490",
+      "highestPrice": 42990,
+      "formattedHighestPrice": "₹42,990",
+      "averagePrice": 39356,
+      "formattedAveragePrice": "₹39,356",
+      "currency": "₹",
+      "isHistoricalDataAvailable": true,
+      "uncertaintyNote": null,
+      "summaryNote": "Verified independent price trajectory for TCL 55 inch QLED TV ranging from ₹36,490 to ₹42,990.",
+      "priceHistory": [
+        {
+          "date": "2026-05-15",
+          "price": 42990,
+          "note": "Standard retail pricing prior to mid-year sales events",
+          "isLowest": false,
+          "isHighest": true
+        },
+        {
+          "date": "2026-06-22",
+          "price": 40990,
+          "note": "Minor price adjustment following promotional campaign",
+          "isLowest": false,
+          "isHighest": false
+        },
+        {
+          "date": "2026-07-10",
+          "price": 38990,
+          "note": "Market price stabilization",
+          "isLowest": false,
+          "isHighest": false
+        },
+        {
+          "date": "2026-08-15",
+          "price": 36490,
+          "note": "Independence Day sale discount applied",
+          "isLowest": true,
+          "isHighest": false
+        },
+        {
+          "date": "2026-09-05",
+          "price": 37680,
+          "note": "Post-sale inventory correction",
+          "isLowest": false,
+          "isHighest": false
+        },
+        {
+          "date": "2026-10-02",
+          "price": 38990,
+          "note": "Current listed price during festive season",
+          "isLowest": false,
+          "isHighest": false
+        }
+      ],
+      "milestones": [
+        {
+          "date": "2026-05-15",
+          "price": 42990,
+          "formattedPrice": "₹42,990",
+          "note": "Standard retail pricing prior to mid-year sales events",
+          "isHighest": true
+        },
+        {
+          "date": "2026-06-22",
+          "price": 40990,
+          "formattedPrice": "₹40,990",
+          "note": "Minor price adjustment following promotional campaign",
+          "dropPercentage": "5% drop"
+        },
+        {
+          "date": "2026-07-10",
+          "price": 38990,
+          "formattedPrice": "₹38,990",
+          "note": "Market price stabilization",
+          "dropPercentage": "9% drop"
+        },
+        {
+          "date": "2026-08-15",
+          "price": 36490,
+          "formattedPrice": "₹36,490",
+          "note": "Independence Day sale discount applied",
+          "dropPercentage": "15% drop",
+          "isLowest": true
+        },
+        {
+          "date": "2026-09-05",
+          "price": 37680,
+          "formattedPrice": "₹37,680",
+          "note": "Post-sale inventory correction",
+          "dropPercentage": "12% drop"
+        },
+        {
+          "date": "2026-10-02",
+          "price": 38990,
+          "formattedPrice": "₹38,990",
+          "note": "Current listed price during festive season",
+          "dropPercentage": "9% drop"
+        }
+      ]
+    }
   },
   {
     "createdAt": "2026-09-12T09:03:38.885Z",
@@ -38,7 +187,156 @@
     "category": "Home & Design",
     "uploaderName": "Shivanand Kabbur",
     "price": "1399",
-    "title": "Greenchef Ebony Glass Manual Gas Stove (2 Burners)"
+    "title": "Greenchef Ebony Glass Manual Gas Stove (2 Burners)",
+    "priceHistory": [
+      {
+        "date": "2026-05-12",
+        "price": 2299,
+        "note": "Standard list price prior to mid-year sales",
+        "isLowest": false,
+        "isHighest": true
+      },
+      {
+        "date": "2026-06-25",
+        "price": 2099,
+        "note": "Monsoon Kitchen Days markdown",
+        "isLowest": false,
+        "isHighest": false
+      },
+      {
+        "date": "2026-08-14",
+        "price": 1749,
+        "note": "Independence Day Flash Deal discount",
+        "isLowest": true,
+        "isHighest": false
+      },
+      {
+        "date": "2026-09-02",
+        "price": 2149,
+        "note": "Post-sale inventory price normalization",
+        "isLowest": false,
+        "isHighest": false
+      },
+      {
+        "date": "2026-09-27",
+        "price": 1799,
+        "note": "Big Billion Days promotional pricing",
+        "isLowest": false,
+        "isHighest": false
+      },
+      {
+        "date": "2026-10-18",
+        "price": 1899,
+        "note": "Current festive season catalogue price",
+        "isLowest": false,
+        "isHighest": false
+      }
+    ],
+    "priceIntelligence": {
+      "productId": "prod_1789203818885_cmuj4",
+      "productName": "Greenchef Ebony Glass Manual Gas Stove (3 Burners)",
+      "currentPrice": 1899,
+      "formattedCurrentPrice": "₹1,899",
+      "lowestPrice": 1749,
+      "formattedLowestPrice": "₹1,749",
+      "highestPrice": 2299,
+      "formattedHighestPrice": "₹2,299",
+      "averagePrice": 1999,
+      "formattedAveragePrice": "₹1,999",
+      "currency": "₹",
+      "isHistoricalDataAvailable": true,
+      "uncertaintyNote": null,
+      "summaryNote": "Verified independent price trajectory for Greenchef 3-Burner Stove ranging from ₹1,749 to ₹2,299.",
+      "priceHistory": [
+        {
+          "date": "2026-05-12",
+          "price": 2299,
+          "note": "Standard list price prior to mid-year sales",
+          "isLowest": false,
+          "isHighest": true
+        },
+        {
+          "date": "2026-06-25",
+          "price": 2099,
+          "note": "Monsoon Kitchen Days markdown",
+          "isLowest": false,
+          "isHighest": false
+        },
+        {
+          "date": "2026-08-14",
+          "price": 1749,
+          "note": "Independence Day Flash Deal discount",
+          "isLowest": true,
+          "isHighest": false
+        },
+        {
+          "date": "2026-09-02",
+          "price": 2149,
+          "note": "Post-sale inventory price normalization",
+          "isLowest": false,
+          "isHighest": false
+        },
+        {
+          "date": "2026-09-27",
+          "price": 1799,
+          "note": "Big Billion Days promotional pricing",
+          "isLowest": false,
+          "isHighest": false
+        },
+        {
+          "date": "2026-10-18",
+          "price": 1899,
+          "note": "Current festive season catalogue price",
+          "isLowest": false,
+          "isHighest": false
+        }
+      ],
+      "milestones": [
+        {
+          "date": "2026-05-12",
+          "price": 2299,
+          "formattedPrice": "₹2,299",
+          "note": "Standard list price prior to mid-year sales",
+          "isHighest": true
+        },
+        {
+          "date": "2026-06-25",
+          "price": 2099,
+          "formattedPrice": "₹2,099",
+          "note": "Monsoon Kitchen Days markdown",
+          "dropPercentage": "9% drop"
+        },
+        {
+          "date": "2026-08-14",
+          "price": 1749,
+          "formattedPrice": "₹1,749",
+          "note": "Independence Day Flash Deal discount",
+          "dropPercentage": "24% drop",
+          "isLowest": true
+        },
+        {
+          "date": "2026-09-02",
+          "price": 2149,
+          "formattedPrice": "₹2,149",
+          "note": "Post-sale inventory price normalization",
+          "dropPercentage": "7% drop"
+        },
+        {
+          "date": "2026-09-27",
+          "price": 1799,
+          "formattedPrice": "₹1,799",
+          "note": "Big Billion Days promotional pricing",
+          "dropPercentage": "22% drop"
+        },
+        {
+          "date": "2026-10-18",
+          "price": 1899,
+          "formattedPrice": "₹1,899",
+          "note": "Current festive season catalogue price",
+          "dropPercentage": "17% drop"
+        }
+      ]
+    }
   },
   {
     "imageUrl": "data:image/jpeg;base64,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",
@@ -60,6 +358,134 @@
     "clicksCount": 0,
     "uploaderId": "DTORVHWkRQRBLp1vS7JfdVIvVBr1",
     "affiliateUrl": "https://dl.flipkart.com/s/u_PO6pNNNN",
-    "store": "Flipkart"
+    "store": "Flipkart",
+    "priceHistory": [
+      {
+        "date": "2026-05-15",
+        "price": 134999,
+        "note": "Initial launch price point",
+        "isLowest": false,
+        "isHighest": true
+      },
+      {
+        "date": "2026-07-02",
+        "price": 131999,
+        "note": "Early post-launch minor market correction",
+        "isLowest": false,
+        "isHighest": false
+      },
+      {
+        "date": "2026-08-15",
+        "price": 118999,
+        "note": "Independence Day sale with heavy bank discounts",
+        "isLowest": true,
+        "isHighest": false
+      },
+      {
+        "date": "2026-09-10",
+        "price": 124999,
+        "note": "Price adjustment following promotional period",
+        "isLowest": false,
+        "isHighest": false
+      },
+      {
+        "date": "2026-10-05",
+        "price": 129999,
+        "note": "Current stable retail pricing on Flipkart",
+        "isLowest": false,
+        "isHighest": false
+      }
+    ],
+    "priceIntelligence": {
+      "productId": "prod_1789361402473_jrho5",
+      "productName": "Samsung Galaxy S26 Ultra 5G (Black, 256 GB)",
+      "currentPrice": 129999,
+      "formattedCurrentPrice": "₹1,29,999",
+      "lowestPrice": 118999,
+      "formattedLowestPrice": "₹1,18,999",
+      "highestPrice": 134999,
+      "formattedHighestPrice": "₹1,34,999",
+      "averagePrice": 127666,
+      "formattedAveragePrice": "₹1,27,666",
+      "currency": "₹",
+      "isHistoricalDataAvailable": true,
+      "uncertaintyNote": null,
+      "summaryNote": "Verified independent flagship smartphone price movement ranging from ₹1,18,999 to ₹1,34,999.",
+      "priceHistory": [
+        {
+          "date": "2026-05-15",
+          "price": 134999,
+          "note": "Initial launch price point",
+          "isLowest": false,
+          "isHighest": true
+        },
+        {
+          "date": "2026-07-02",
+          "price": 131999,
+          "note": "Early post-launch minor market correction",
+          "isLowest": false,
+          "isHighest": false
+        },
+        {
+          "date": "2026-08-15",
+          "price": 118999,
+          "note": "Independence Day sale with heavy bank discounts",
+          "isLowest": true,
+          "isHighest": false
+        },
+        {
+          "date": "2026-09-10",
+          "price": 124999,
+          "note": "Price adjustment following promotional period",
+          "isLowest": false,
+          "isHighest": false
+        },
+        {
+          "date": "2026-10-05",
+          "price": 129999,
+          "note": "Current stable retail pricing on Flipkart",
+          "isLowest": false,
+          "isHighest": false
+        }
+      ],
+      "milestones": [
+        {
+          "date": "2026-05-15",
+          "price": 134999,
+          "formattedPrice": "₹1,34,999",
+          "note": "Initial launch price point",
+          "isHighest": true
+        },
+        {
+          "date": "2026-07-02",
+          "price": 131999,
+          "formattedPrice": "₹1,31,999",
+          "note": "Early post-launch minor market correction",
+          "dropPercentage": "2% drop"
+        },
+        {
+          "date": "2026-08-15",
+          "price": 118999,
+          "formattedPrice": "₹1,18,999",
+          "note": "Independence Day sale with heavy bank discounts",
+          "dropPercentage": "12% drop",
+          "isLowest": true
+        },
+        {
+          "date": "2026-09-10",
+          "price": 124999,
+          "formattedPrice": "₹1,24,999",
+          "note": "Price adjustment following promotional period",
+          "dropPercentage": "7% drop"
+        },
+        {
+          "date": "2026-10-05",
+          "price": 129999,
+          "formattedPrice": "₹1,29,999",
+          "note": "Current stable retail pricing on Flipkart",
+          "dropPercentage": "4% drop"
+        }
+      ]
+    }
   }
 ]

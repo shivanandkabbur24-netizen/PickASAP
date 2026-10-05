@@ -72,6 +72,10 @@ service cloud.firestore {
              data.recordedAt is string &&
              data.source is string && data.source.size() <= 100 &&
              (!('note' in data) || (data.note is string && data.note.size() <= 500)) &&
+             (!('dropPercentage' in data) || (data.dropPercentage is string && data.dropPercentage.size() <= 50)) &&
+             (!('productId' in data) || (data.productId is string && data.productId.size() <= 128)) &&
+             (!('isLowest' in data) || data.isLowest is bool) &&
+             (!('isHighest' in data) || data.isHighest is bool) &&
              (!('submittedBy' in data) || (data.submittedBy is string && data.submittedBy.size() <= 128)) &&
              (!('approvalMethod' in data) || (data.approvalMethod in ['automatic', 'trusted-user', 'admin'])) &&
              (!('submissionId' in data) || (data.submissionId is string && data.submissionId.size() <= 128));

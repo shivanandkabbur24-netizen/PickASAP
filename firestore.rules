@@ -71,6 +71,7 @@ service cloud.firestore {
              data.price is number && data.price >= 0 &&
              data.recordedAt is string &&
              data.source is string && data.source.size() <= 100 &&
+             (!('sourceUrl' in data) || (data.sourceUrl is string && data.sourceUrl.size() <= 2000)) &&
              (!('note' in data) || (data.note is string && data.note.size() <= 500)) &&
              (!('dropPercentage' in data) || (data.dropPercentage is string && data.dropPercentage.size() <= 50)) &&
              (!('productId' in data) || (data.productId is string && data.productId.size() <= 128)) &&

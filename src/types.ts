@@ -8,11 +8,14 @@ export interface PriceSnapshot {
   price: number;
   recordedAt: string;
   source: 'initial' | 'admin_verified' | 'community_update' | 'trusted_user' | 'background_intelligence' | string;
+  sourceUrl?: string;
   note?: string;
   submittedBy?: string;
   approvalMethod?: ApprovalMethod;
   submissionId?: string;
   dropPercentage?: string;
+  isLowest?: boolean;
+  isHighest?: boolean;
 }
 
 export interface PriceMilestone {
@@ -20,6 +23,8 @@ export interface PriceMilestone {
   price: number;
   formattedPrice: string;
   note: string;
+  source?: string;
+  sourceUrl?: string;
   dropPercentage?: string;
   isLowest?: boolean;
   isHighest?: boolean;
@@ -66,6 +71,8 @@ export interface PriceComparisonData {
 export interface PriceHistoryPoint {
   date: string;
   price: number;
+  source?: string;
+  sourceUrl?: string;
   note?: string;
   dropPercentage?: string;
   isLowest?: boolean;

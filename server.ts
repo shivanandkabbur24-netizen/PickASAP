@@ -120,6 +120,7 @@ async function fetchPriceIntelligenceFromGemini(params: {
   title: string;
   brand?: string;
   modelIdentifier?: string;
+  asin?: string;
   resolvedUrl?: string;
   effectiveUrl?: string;
   store?: string;
@@ -132,6 +133,7 @@ async function fetchPriceIntelligenceFromGemini(params: {
     title,
     brand,
     modelIdentifier,
+    asin,
     resolvedUrl,
     effectiveUrl,
     store,
@@ -160,12 +162,18 @@ CRITICAL REQUIREMENTS:
 1. Treat every product as a completely separate and independent research request.
 2. NEVER reuse, copy, scale, transform, randomize, or modify the price-history pattern of another product.
 3. DO NOT use a fixed/template price-history array.
-4. DO NOT generate a generic price curve and simply change the numbers according to the current product price.
-5. DO NOT assume that two different products have the same historical price movement.
-6. The requested historical data must correspond specifically to THAT product, not to a generic product in the same category.
-7. If reliable historical prices cannot be determined, DO NOT fabricate realistic-looking prices just to complete the graph.
-   Instead, return only the historical prices that can be reasonably supported by available information. Set "isHistoricalDataAvailable" to false, provide only the current/initial price point in "priceHistory", and clearly indicate when historical data is unavailable or uncertain in "uncertaintyNote".
-8. The dates must be in YYYY-MM-DD format, sorted chronologically from oldest to newest.
+4. DO NOT generate a generic price curve or formula.
+5. REAL VERIFIED DATA > COMPLETE GRAPH. Fabricated historical data is strictly prohibited.
+6. The requested historical data must correspond specifically to THAT exact product, distinguishing storage variants, RAM variants, colors, listing, model numbers, and generations.
+7. If reliable historical prices cannot be verified from reliable sources with reasonable confidence, you MUST set:
+   "isHistoricalDataAvailable": false,
+   "priceHistory": []
+8. If genuine historical prices can be verified, each observation MUST contain:
+   - "date": "YYYY-MM-DD"
+   - "price": number in INR
+   - "source": name of the specific verified marketplace, catalog, or archive source
+   - "sourceUrl": URL of the source if known (or null)
+   - "note": factual description of the observation
 9. Return structured JSON strictly adhering to the requested format.`;
 
   const prompt = `Research and return the independent historical price data specifically for this exact product:
@@ -173,6 +181,7 @@ Product ID: "${productId}"
 Product Name: "${title}"
 Brand: "${brand || ''}"
 Model Identifier: "${modelIdentifier || ''}"
+ASIN / SKU / Identifier: "${asin || ''}"
 Store / Marketplace: "${store || 'Online'}"
 Product URL: "${resolvedUrl || effectiveUrl || ''}"
 Current Price: ${currentPriceNum}
@@ -184,19 +193,18 @@ REQUIRED RESPONSE FORMAT:
   "productId": "${productId}",
   "productName": "${title.replace(/"/g, '\\"')}",
   "currentPrice": ${currentPriceNum},
-  "isHistoricalDataAvailable": true,
-  "uncertaintyNote": null,
+  "isHistoricalDataAvailable": boolean,
+  "uncertaintyNote": string or null,
+  "summaryNote": string,
   "priceHistory": [
     {
       "date": "YYYY-MM-DD",
       "price": number,
-      "note": "string (e.g. Launch MRP / Landmark sale deal / Festive discount / Current price)"
+      "source": "string",
+      "sourceUrl": "string or null",
+      "note": "string"
     }
-  ],
-  "lowestPrice": number,
-  "highestPrice": number,
-  "averagePrice": number,
-  "summaryNote": "string"
+  ]
 }`;
 
   const models = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
@@ -259,7 +267,7 @@ app.post('/api/price-history/resolve-url', async (req, res) => {
 
 // Endpoint: Background Gemini Price History Intelligence Engine
 app.post('/api/price-history/fetch', async (req, res) => {
-  const { productId, url, title, brand, modelIdentifier, store, currentPrice, category, description } = req.body;
+  const { productId, url, title, brand, modelIdentifier, asin, store, currentPrice, category, description } = req.body;
 
   const currentPriceNum = parsePrice(currentPrice);
   const effectiveTitle = (title || '').trim() || 'Curated Product';
@@ -289,6 +297,7 @@ app.post('/api/price-history/fetch', async (req, res) => {
       title: querySubject,
       brand,
       modelIdentifier,
+      asin,
       resolvedUrl,
       effectiveUrl,
       store,
@@ -297,18 +306,23 @@ app.post('/api/price-history/fetch', async (req, res) => {
       description,
     });
 
-    if (parsedData && Array.isArray(parsedData.priceHistory) && parsedData.priceHistory.length > 0) {
-      // Clean and sort priceHistory chronologically
-      const validPoints = parsedData.priceHistory
-        .map((p: any) => ({
-          date: p.date || new Date().toISOString().split('T')[0],
-          price: parsePrice(p.price),
-          note: p.note || 'Recorded price point',
-        }))
-        .filter((p: any) => p.price > 0)
-        .sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    if (parsedData) {
+      const isAvailable = Boolean(parsedData.isHistoricalDataAvailable);
+      const rawPoints = Array.isArray(parsedData.priceHistory) ? parsedData.priceHistory : [];
+      const validPoints = isAvailable
+        ? rawPoints
+            .map((p: any) => ({
+              date: p.date || new Date().toISOString().split('T')[0],
+              price: parsePrice(p.price),
+              source: p.source || (p.note ? 'Verified Archive' : 'Listing'),
+              sourceUrl: p.sourceUrl || null,
+              note: p.note || 'Verified historical observation',
+            }))
+            .filter((p: any) => p.price > 0 && p.source)
+            .sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime())
+        : [];
 
-      if (validPoints.length > 0) {
+      if (isAvailable && validPoints.length >= 2) {
         const prices = validPoints.map((p: any) => p.price);
         const low = Math.min(...prices);
         const high = Math.max(...prices);
@@ -319,13 +333,13 @@ app.post('/api/price-history/fetch', async (req, res) => {
           date: p.date,
           price: p.price,
           formattedPrice: formatINR(p.price),
+          source: p.source,
+          sourceUrl: p.sourceUrl,
           note: p.note,
           dropPercentage: high > p.price ? `${Math.round(((high - p.price) / high) * 100)}% drop` : undefined,
           isLowest: p.price === low,
           isHighest: p.price === high,
         }));
-
-        const isHistoricalAvailable = parsedData.isHistoricalDataAvailable !== false && validPoints.length > 1;
 
         const normalized = {
           productId: effectiveProductId,
@@ -341,13 +355,9 @@ app.post('/api/price-history/fetch', async (req, res) => {
           averagePrice: avg,
           formattedAveragePrice: formatINR(avg),
           currency: '₹',
-          isHistoricalDataAvailable: isHistoricalAvailable,
-          uncertaintyNote: isHistoricalAvailable
-            ? null
-            : (parsedData.uncertaintyNote || 'Initial price tracking started with current listing. No prior historical price fluctuations verified.'),
-          summaryNote: parsedData.summaryNote || (isHistoricalAvailable
-            ? `Verified product-specific price trajectory ranging from ${formatINR(low)} to ${formatINR(high)}.`
-            : `Tracking active for ${querySubject} at ${formatINR(cur)}. Real-time price tracking is active.`),
+          isHistoricalDataAvailable: true,
+          uncertaintyNote: null,
+          summaryNote: parsedData.summaryNote || `Verified product-specific price trajectory ranging from ${formatINR(low)} to ${formatINR(high)}.`,
           priceHistory: validPoints,
           milestones,
         };
@@ -357,20 +367,39 @@ app.post('/api/price-history/fetch', async (req, res) => {
           source: 'gemini_intelligence',
           data: normalized,
         });
+      } else {
+        // Historical data unavailable or unverified
+        return res.json({
+          success: true,
+          source: 'gemini_intelligence',
+          data: {
+            productId: effectiveProductId,
+            productName: parsedData.productName || querySubject,
+            productTitle: parsedData.productName || querySubject,
+            resolvedUrl,
+            currentPrice: currentPriceNum,
+            formattedCurrentPrice: formatINR(currentPriceNum),
+            lowestPrice: currentPriceNum,
+            formattedLowestPrice: formatINR(currentPriceNum),
+            highestPrice: currentPriceNum,
+            formattedHighestPrice: formatINR(currentPriceNum),
+            averagePrice: currentPriceNum,
+            formattedAveragePrice: formatINR(currentPriceNum),
+            currency: '₹',
+            isHistoricalDataAvailable: false,
+            uncertaintyNote: parsedData.uncertaintyNote || 'Historical price data unavailable from verified sources for this specific product listing.',
+            summaryNote: `Current listing price is ${formatINR(currentPriceNum)}. Historical price tracking is active.`,
+            priceHistory: [],
+            milestones: [],
+          },
+        });
       }
     }
   } catch (apiErr) {
     console.warn('Price history fetch exception:', apiErr);
   }
 
-  // Independent Baseline Fallback: Product has its OWN baseline (the current verified price), with NO fabricated template or shared curve!
-  const todayStr = new Date().toISOString().split('T')[0];
-  const baselinePoint = {
-    date: todayStr,
-    price: currentPriceNum,
-    note: 'Initial verified listing price',
-  };
-
+  // Authentic fallback: No fake historical dates, zero fake points
   const fallbackData = {
     productId: effectiveProductId,
     productName: querySubject,
@@ -386,19 +415,10 @@ app.post('/api/price-history/fetch', async (req, res) => {
     formattedAveragePrice: formatINR(currentPriceNum),
     currency: '₹',
     isHistoricalDataAvailable: false,
-    uncertaintyNote: 'Historical price tracking initiated with current listing. Real-time updates will record automatically as prices change.',
-    summaryNote: `Current listing price is ${formatINR(currentPriceNum)}. Real-time tracking is active.`,
-    priceHistory: [baselinePoint],
-    milestones: [
-      {
-        date: todayStr,
-        price: currentPriceNum,
-        formattedPrice: formatINR(currentPriceNum),
-        note: 'Initial verified listing price',
-        isLowest: true,
-        isHighest: true,
-      },
-    ],
+    uncertaintyNote: 'Historical price data unavailable from verified sources for this specific product listing.',
+    summaryNote: `Current listing price is ${formatINR(currentPriceNum)}. Historical price tracking is active.`,
+    priceHistory: [],
+    milestones: [],
   };
 
   return res.json({

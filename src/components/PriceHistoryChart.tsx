@@ -60,25 +60,7 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
   const [timeRange, setTimeRange] = useState<'30d' | '90d' | 'all'>('all');
   const [intelligence, setIntelligence] = useState<PriceIntelligenceData | null>(() => {
     const cached = getCachedPriceIntelligence(productId);
-    if (cached && cached.productId === productId) return cached;
-    if (product) {
-      if (product.priceIntelligence && product.priceIntelligence.isHistoricalDataAvailable) {
-        return product.priceIntelligence;
-      }
-      return generateClientPriceHistory({
-        id: productId,
-        title: product.title || '',
-        brand: product.brand,
-        modelIdentifier: product.modelIdentifier,
-        price: product.price,
-        currentPrice: currentPrice || product.currentPrice,
-        mrp: product.mrp || product.originalPrice,
-        originalPrice: product.originalPrice,
-        store: product.store,
-        priceHistory: product.priceHistory,
-        priceIntelligence: product.priceIntelligence,
-      });
-    }
+    if (cached && cached.productId === productId && cached.isHistoricalDataAvailable) return cached;
     return null;
   });
   const [hoveredPoint, setHoveredPoint] = useState<{
@@ -105,8 +87,6 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
       originalPrice: product?.originalPrice,
       category: product?.category,
       description: product?.description,
-      priceHistory: product?.priceHistory,
-      priceIntelligence: product?.priceIntelligence,
     };
 
     try {
@@ -148,8 +128,6 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
       originalPrice: product?.originalPrice,
       category: product?.category,
       description: product?.description,
-      priceHistory: product?.priceHistory,
-      priceIntelligence: product?.priceIntelligence,
     };
 
     fetchBackgroundPriceHistory(prodPayload)
@@ -201,17 +179,20 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
   const effectiveSnapshots = useMemo(() => {
     const intel = intelligence || getCachedPriceIntelligence(productId);
 
-    // 1. If Gemini price intelligence has verified historical points for THIS specific product with variance:
-    const intelPoints = intel?.priceHistory && intel.priceHistory.length > 0 ? intel.priceHistory : intel?.milestones;
-    if (intel?.isHistoricalDataAvailable && Array.isArray(intelPoints) && intelPoints.length > 1) {
+    // 1. If Gemini price intelligence has verified historical points for THIS specific product:
+    const intelPoints = intel?.priceHistory;
+    if (intel?.isHistoricalDataAvailable && Array.isArray(intelPoints) && intelPoints.length > 0) {
       const milestoneSnaps: PriceSnapshot[] = intelPoints.map((m: any, idx: number) => ({
         id: `snap_hist_${productId}_${idx}_${new Date(m.date).getTime()}`,
         productId,
         price: m.price,
         recordedAt: new Date(m.date).toISOString(),
-        source: 'background_intelligence',
+        source: m.source || 'verified_intelligence',
+        sourceUrl: m.sourceUrl,
         note: m.note || 'Recorded verified price',
         dropPercentage: m.dropPercentage,
+        isLowest: m.isLowest,
+        isHighest: m.isHighest,
       }));
 
       return milestoneSnaps.sort(
@@ -219,37 +200,16 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
       );
     }
 
-    // 2. If product object itself carries authentic historical points
-    if (Array.isArray(product?.priceHistory) && product.priceHistory.length > 1) {
-      const prodSnaps: PriceSnapshot[] = product.priceHistory.map((m: any, idx: number) => ({
-        id: `snap_hist_${productId}_${idx}_${new Date(m.date).getTime()}`,
-        productId,
-        price: m.price,
-        recordedAt: new Date(m.date).toISOString(),
-        source: 'background_intelligence',
-        note: m.note || 'Recorded verified price',
-        dropPercentage: m.dropPercentage,
-        isLowest: m.isLowest,
-        isHighest: m.isHighest,
-      }));
-
-      return prodSnaps.sort(
+    // 2. Otherwise check snapshots from Firestore for THIS exact productId
+    if (Array.isArray(snapshots) && snapshots.length > 0) {
+      const forThisProduct = snapshots.filter((s) => !s.productId || s.productId === productId);
+      return forThisProduct.sort(
         (a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime()
       );
     }
 
-    // 2. Check if sortedSnapshots (e.g. from user/community/admin price updates) has multiple entries with actual variance
-    if (sortedSnapshots.length > 1) {
-      const hasVariance =
-        Math.max(...sortedSnapshots.map((s) => s.price)) > Math.min(...sortedSnapshots.map((s) => s.price));
-      if (hasVariance) {
-        return sortedSnapshots;
-      }
-    }
-
-    // 3. If there is only 1 baseline snapshot or no verified variance, return sortedSnapshots (which has the 1 baseline)
-    return sortedSnapshots;
-  }, [sortedSnapshots, intelligence, productId]);
+    return [];
+  }, [snapshots, intelligence, productId]);
 
   // Format date nicely
   const formatDate = (isoOrDateStr: string | number) => {
@@ -282,105 +242,54 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
     }
   };
 
-  // Compute active timeline window, data points, and period stats based on selected timeRange
-  const { timelinePoints, timeBounds, periodStats } = useMemo(() => {
+  // Filter observations strictly based on selected timeRange (NO fake boundary points)
+  const displaySnapshots = useMemo(() => {
+    if (effectiveSnapshots.length === 0) return [];
+    if (timeRange === 'all') return effectiveSnapshots;
+
+    const lastTime = new Date(effectiveSnapshots[effectiveSnapshots.length - 1].recordedAt).getTime();
+    const days = timeRange === '30d' ? 30 : 90;
+    const cutoff = lastTime - days * 24 * 60 * 60 * 1000;
+    const inRange = effectiveSnapshots.filter(
+      (s) => new Date(s.recordedAt).getTime() >= cutoff
+    );
+    return inRange.length > 0 ? inRange : effectiveSnapshots;
+  }, [effectiveSnapshots, timeRange]);
+
+  // Compute period stats strictly from actual observations
+  const periodStats = useMemo(() => {
     const rawCurrent =
       typeof currentPrice === 'number' && currentPrice > 0
         ? currentPrice
         : intelligence?.currentPrice || (effectiveSnapshots.length > 0 ? effectiveSnapshots[effectiveSnapshots.length - 1].price : 0);
 
-    const effectiveNow = effectiveSnapshots.length > 0
-      ? Math.max(Date.now(), new Date(effectiveSnapshots[effectiveSnapshots.length - 1].recordedAt).getTime())
-      : Date.now();
-
-    let rangeStart: number;
-    const rangeEnd: number = effectiveNow;
-
-    if (timeRange === '30d') {
-      rangeStart = effectiveNow - 30 * 24 * 60 * 60 * 1000;
-    } else if (timeRange === '90d') {
-      rangeStart = effectiveNow - 90 * 24 * 60 * 60 * 1000;
-    } else {
-      rangeStart = effectiveSnapshots.length > 0
-        ? new Date(effectiveSnapshots[0].recordedAt).getTime()
-        : effectiveNow - 180 * 24 * 60 * 60 * 1000;
+    if (displaySnapshots.length === 0) {
+      return {
+        current: rawCurrent,
+        lowest: rawCurrent,
+        highest: rawCurrent,
+        average: rawCurrent,
+        specialOfferPrice: intelligence?.specialOfferPrice,
+        lastUpdated: new Date().toISOString(),
+      };
     }
 
-    // Determine baseline prevailing price right before or at rangeStart
-    let openingPrice = rawCurrent;
-    if (effectiveSnapshots.length > 0) {
-      const prior = effectiveSnapshots.filter(
-        (s) => new Date(s.recordedAt).getTime() <= rangeStart
-      );
-      if (prior.length > 0) {
-        openingPrice = prior[prior.length - 1].price;
-      } else {
-        openingPrice = effectiveSnapshots[0].price;
-      }
-    }
-
-    // Snapshots inside the window (rangeStart, rangeEnd]
-    const insideSnapshots = effectiveSnapshots.filter((s) => {
-      const t = new Date(s.recordedAt).getTime();
-      return t > rangeStart && t <= rangeEnd;
-    });
-
-    const points: PriceSnapshot[] = [];
-
-    // 1. Boundary opening point for the timeline window
-    points.push({
-      id: `bound-start-${timeRange}`,
-      productId,
-      price: openingPrice,
-      recordedAt: new Date(rangeStart).toISOString(),
-      source: 'automated',
-      note: timeRange === 'all' ? (effectiveSnapshots[0]?.note || 'Initial tracked launch price') : `Baseline price at start of ${timeRange === '30d' ? '30-day' : '90-day'} window`,
-    });
-
-    // 2. All snapshots falling in this window
-    for (const s of insideSnapshots) {
-      points.push(s);
-    }
-
-    // 3. Current closing point at rangeEnd (today)
-    const latestPrice = effectiveSnapshots.length > 0
-      ? (typeof currentPrice === 'number' && currentPrice > 0 ? currentPrice : effectiveSnapshots[effectiveSnapshots.length - 1].price)
-      : openingPrice;
-
-    const lastPointTime = new Date(points[points.length - 1].recordedAt).getTime();
-    if (Math.abs(rangeEnd - lastPointTime) > 60 * 60 * 1000) {
-      points.push({
-        id: `bound-end-${timeRange}`,
-        productId,
-        price: latestPrice,
-        recordedAt: new Date(rangeEnd).toISOString(),
-        source: 'automated',
-        note: 'Active verified price',
-      });
-    }
-
-    // Calculate period specific statistics
-    const windowPrices = points.map((p) => p.price);
-    const lowest = Math.min(...windowPrices);
-    const highest = Math.max(...windowPrices);
-    const sum = windowPrices.reduce((acc, p) => acc + p, 0);
-    const average = Math.round(sum / windowPrices.length);
+    const prices = displaySnapshots.map((p) => p.price);
+    const lowest = Math.min(...prices);
+    const highest = Math.max(...prices);
+    const sum = prices.reduce((acc, p) => acc + p, 0);
+    const average = Math.round(sum / prices.length);
 
     return {
-      timelinePoints: points,
-      timeBounds: { start: rangeStart, end: rangeEnd },
-      periodStats: {
-        current: rawCurrent,
-        lowest,
-        highest,
-        average,
-        specialOfferPrice: intelligence?.specialOfferPrice,
-        lastUpdated: effectiveSnapshots.length > 0 ? effectiveSnapshots[effectiveSnapshots.length - 1].recordedAt : new Date().toISOString(),
-      },
+      current: rawCurrent || displaySnapshots[displaySnapshots.length - 1].price,
+      lowest,
+      highest,
+      average,
+      specialOfferPrice: intelligence?.specialOfferPrice,
+      lastUpdated: displaySnapshots[displaySnapshots.length - 1].recordedAt,
     };
-  }, [effectiveSnapshots, timeRange, currentPrice, intelligence, productId]);
+  }, [displaySnapshots, currentPrice, intelligence, effectiveSnapshots]);
 
-  // Overall all-time stats reference
   const stats = periodStats;
 
   // SVG Chart Dimensions and Points
@@ -389,31 +298,35 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
   const paddingX = 55;
   const paddingY = 35;
 
+  // Chart renders ONLY when at least 2 genuine observations exist for this exact product
   const chartData = useMemo(() => {
-    if (timelinePoints.length < 2) return null;
+    if (displaySnapshots.length < 2) return null;
 
-    const prices = timelinePoints.map((s) => s.price);
+    const prices = displaySnapshots.map((s) => s.price);
     const minPrice = Math.min(...prices);
     const maxPrice = Math.max(...prices);
     const rawSpan = maxPrice - minPrice;
     const priceSpan = rawSpan === 0 ? (maxPrice > 0 ? maxPrice * 0.1 : 100) : rawSpan;
 
-    // Give 14% padding top and bottom to ensure curve doesn't clip
+    // 14% padding top and bottom so dots never clip
     const yMin = Math.max(0, minPrice - priceSpan * 0.14);
     const yMax = maxPrice + priceSpan * 0.14;
     const yRange = yMax - yMin || 1;
 
-    const minTime = timeBounds.start;
-    const maxTime = timeBounds.end;
+    const times = displaySnapshots.map((s) => new Date(s.recordedAt).getTime());
+    const minTime = Math.min(...times);
+    const maxTime = Math.max(...times);
     const timeSpan = maxTime - minTime || 1;
 
     const innerWidth = svgWidth - paddingX * 2;
     const innerHeight = svgHeight - paddingY * 2;
 
-    const points = timelinePoints.map((s) => {
+    const points = displaySnapshots.map((s) => {
       const time = new Date(s.recordedAt).getTime();
-      const clampedTime = Math.max(minTime, Math.min(maxTime, time));
-      const x = paddingX + ((clampedTime - minTime) / timeSpan) * innerWidth;
+      const x =
+        timeSpan === 0
+          ? paddingX + innerWidth / 2
+          : paddingX + ((time - minTime) / timeSpan) * innerWidth;
       const y = svgHeight - paddingY - ((s.price - yMin) / yRange) * innerHeight;
       return { x, y, snapshot: s };
     });
@@ -429,7 +342,7 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
       svgHeight - paddingY
     } Z`;
 
-    // Calculate grid lines (3 horizontal lines)
+    // 3 horizontal price guideline rows
     const gridYValues = [
       { price: maxPrice, y: svgHeight - paddingY - ((maxPrice - yMin) / yRange) * innerHeight },
       {
@@ -439,32 +352,11 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
       { price: minPrice, y: svgHeight - paddingY - ((minPrice - yMin) / yRange) * innerHeight },
     ];
 
-    return { points, pathD, areaD, gridYValues, minPrice, maxPrice };
-  }, [timelinePoints, timeBounds]);
+    return { points, pathD, areaD, gridYValues, minPrice, maxPrice, minTime, maxTime };
+  }, [displaySnapshots]);
 
   // All recorded milestones for THIS specific product
   const allMilestones: PriceMilestone[] = useMemo(() => {
-    const intelPoints = intelligence?.priceHistory;
-    if (intelligence?.isHistoricalDataAvailable && Array.isArray(intelPoints) && intelPoints.length > 0) {
-      const highestPrice = Math.max(...intelPoints.map((s) => s.price));
-      const lowestPrice = Math.min(...intelPoints.map((s) => s.price));
-
-      return [...intelPoints]
-        .reverse()
-        .map((s) => ({
-          date: s.date,
-          price: s.price,
-          formattedPrice: formatPriceDisplay(s.price, currency),
-          note: s.note || 'Recorded price point',
-          dropPercentage:
-            highestPrice > s.price
-              ? `${Math.round(((highestPrice - s.price) / highestPrice) * 100)}% drop`
-              : undefined,
-          isLowest: s.price === lowestPrice,
-          isHighest: s.price === highestPrice,
-        }));
-    }
-
     if (effectiveSnapshots.length > 0) {
       const highestPrice = Math.max(...effectiveSnapshots.map((s) => s.price));
       const lowestPrice = Math.min(...effectiveSnapshots.map((s) => s.price));
@@ -481,6 +373,8 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
             date: s.recordedAt.split('T')[0],
             price: s.price,
             formattedPrice: formatPriceDisplay(s.price, currency),
+            source: s.source,
+            sourceUrl: s.sourceUrl,
             note: s.note || 'Recorded verified price',
             dropPercentage: s.dropPercentage || dropFromPeak,
             isLowest: s.price === lowestPrice,
@@ -490,16 +384,15 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
     }
 
     return [];
-  }, [intelligence, effectiveSnapshots, currency]);
+  }, [effectiveSnapshots, currency]);
 
   // Filter milestones by active timeRange window
   const milestones: PriceMilestone[] = useMemo(() => {
     if (timeRange === 'all') return allMilestones;
-    return allMilestones.filter((m) => {
-      const t = new Date(m.date).getTime();
-      return !isNaN(t) && t >= timeBounds.start && t <= timeBounds.end + 24 * 60 * 60 * 1000;
-    });
-  }, [allMilestones, timeRange, timeBounds]);
+    if (displaySnapshots.length === 0) return [];
+    const validDates = new Set(displaySnapshots.map((s) => s.recordedAt.split('T')[0]));
+    return allMilestones.filter((m) => validDates.has(m.date));
+  }, [allMilestones, timeRange, displaySnapshots]);
 
   return (
     <div
@@ -716,8 +609,47 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
         </div>
       )}
 
-      {/* Case A: Single Snapshot / Baseline State */}
-      {!loading && effectiveSnapshots.length <= 1 && !chartData && (
+      {/* Case 0: Zero verified historical observations */}
+      {!loading && effectiveSnapshots.length === 0 && !chartData && (
+        <div
+          id="no-history-state"
+          className="p-5 sm:p-6 bg-white dark:bg-neutral-900/60 rounded-xl border border-neutral-200/80 dark:border-neutral-800 text-center"
+        >
+          <div className="w-10 h-10 mx-auto rounded-full bg-neutral-100 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 flex items-center justify-center text-neutral-500 mb-3">
+            <Info className="w-5 h-5" />
+          </div>
+          <h4 className="text-sm sm:text-base font-semibold text-neutral-800 dark:text-neutral-200">
+            Historical price data unavailable
+          </h4>
+          <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 max-w-md mx-auto">
+            {intelligence?.uncertaintyNote ||
+              'No verified historical price observations could be confirmed for this specific product listing. Real-time price tracking has been initiated at the current listed price, and verified points will be logged as price adjustments occur.'}
+          </p>
+
+          <div className="mt-4 inline-flex flex-wrap items-center justify-center gap-3 bg-neutral-100 dark:bg-neutral-800/80 px-4 py-2 rounded-lg text-xs font-medium text-neutral-700 dark:text-neutral-300">
+            <span className="flex items-center gap-1.5">
+              <Tag className="w-3.5 h-3.5 text-[#FF6E40]" />
+              Current Listed Price:{' '}
+              <strong className="text-neutral-900 dark:text-white">
+                {formatPriceDisplay(stats.current, currency)}
+              </strong>
+            </span>
+            <span className="hidden sm:inline text-neutral-300 dark:text-neutral-600">|</span>
+            <span className="flex items-center gap-1.5 text-neutral-500 dark:text-neutral-400">
+              <Clock className="w-3.5 h-3.5" />
+              Real-time Tracking Active
+            </span>
+            <span className="hidden sm:inline text-neutral-300 dark:text-neutral-600">|</span>
+            <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              Verified Current Listing
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Case 1: Exactly 1 verified observation (Current/Initial Tracking State) */}
+      {!loading && effectiveSnapshots.length === 1 && !chartData && (
         <div
           id="single-snapshot-state"
           className="p-5 sm:p-6 bg-white dark:bg-neutral-900/60 rounded-xl border border-neutral-200/80 dark:border-neutral-800 text-center"
@@ -726,11 +658,10 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
             <ShieldCheck className="w-5 h-5" />
           </div>
           <h4 className="text-sm sm:text-base font-semibold text-neutral-800 dark:text-neutral-200">
-            Independent Price Tracking Active
+            Price Tracking Active (1 Observation)
           </h4>
           <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 max-w-md mx-auto">
-            {intelligence?.uncertaintyNote ||
-              'Currently tracking verified listing price. Gemini AI confirmed no prior price fluctuations have been officially recorded for this specific product. A chronological trend graph will dynamically appear as price adjustments occur.'}
+            Initial verified price point recorded for this exact product listing. A chronological trend graph will appear once additional verified price movements are detected.
           </p>
 
           <div className="mt-4 inline-flex flex-wrap items-center justify-center gap-3 bg-neutral-100 dark:bg-neutral-800/80 px-4 py-2 rounded-lg text-xs font-medium text-neutral-700 dark:text-neutral-300">
@@ -738,24 +669,24 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
               <Tag className="w-3.5 h-3.5 text-[#FF6E40]" />
               Tracked Price:{' '}
               <strong className="text-neutral-900 dark:text-white">
-                {formatPriceDisplay(stats.current || stats.lowest, currency)}
+                {formatPriceDisplay(effectiveSnapshots[0].price, currency)}
               </strong>
             </span>
             <span className="hidden sm:inline text-neutral-300 dark:text-neutral-600">|</span>
             <span className="flex items-center gap-1.5 text-neutral-500 dark:text-neutral-400">
               <Calendar className="w-3.5 h-3.5" />
-              Tracking Active Since: {formatDate(stats.lastUpdated)}
+              Recorded: {formatDate(effectiveSnapshots[0].recordedAt)}
             </span>
             <span className="hidden sm:inline text-neutral-300 dark:text-neutral-600">|</span>
             <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
               <CheckCircle2 className="w-3.5 h-3.5" />
-              Authentic Product Dataset
+              {effectiveSnapshots[0].source || 'Verified Listing'}
             </span>
           </div>
         </div>
       )}
 
-      {/* Case B: Multi-Snapshot Interactive Trend Chart */}
+      {/* Case 2+: Interactive Trend Chart plotting ONLY verified observations */}
       {chartData && (
         <div className="relative bg-white dark:bg-neutral-900/80 rounded-xl border border-neutral-200 dark:border-neutral-800 p-2 sm:p-4 overflow-hidden">
           <svg
@@ -836,16 +767,18 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
               );
             })}
 
-            {/* Dedicated X-Axis Timeline Labels */}
+            {/* Dedicated X-Axis Timeline Labels from genuine observations */}
             <g className="fill-neutral-400 dark:fill-neutral-500 text-[10px] font-sans select-none">
               <text x={paddingX} y={svgHeight - 10} textAnchor="start">
-                {formatDate(timeBounds.start)}
+                {formatDate(chartData.minTime)}
               </text>
-              <text x={svgWidth / 2} y={svgHeight - 10} textAnchor="middle">
-                {formatDate((timeBounds.start + timeBounds.end) / 2)}
-              </text>
+              {chartData.minTime !== chartData.maxTime && (
+                <text x={svgWidth / 2} y={svgHeight - 10} textAnchor="middle">
+                  {formatDate((chartData.minTime + chartData.maxTime) / 2)}
+                </text>
+              )}
               <text x={svgWidth - paddingX} y={svgHeight - 10} textAnchor="end">
-                {timeRange === 'all' ? formatDate(timeBounds.end) : 'Today'}
+                {formatDate(chartData.maxTime)}
               </text>
             </g>
           </svg>
@@ -853,7 +786,7 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
           {/* Floating Tooltip when hovering over a snapshot dot */}
           {hoveredPoint && (
             <div
-              className="absolute z-20 pointer-events-none bg-neutral-900/95 dark:bg-white/95 text-white dark:text-neutral-900 px-3 py-2 rounded-lg shadow-xl text-xs backdrop-blur-xs border border-neutral-700 dark:border-neutral-200 transition-all duration-100"
+              className="absolute z-20 pointer-events-none bg-neutral-900/95 dark:bg-white/95 text-white dark:text-neutral-900 px-3 py-2 rounded-lg shadow-xl text-xs backdrop-blur-xs border border-neutral-700 dark:border-neutral-200 transition-all duration-100 max-w-xs"
               style={{
                 left: `${Math.min(
                   Math.max(hoveredPoint.x * (100 / svgWidth) - 15, 5),
@@ -869,6 +802,11 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
                 <Calendar className="w-3 h-3" />
                 {formatDateTime(hoveredPoint.snapshot.recordedAt)}
               </div>
+              {hoveredPoint.snapshot.source && (
+                <div className="text-[10px] text-emerald-400 dark:text-emerald-600 mt-0.5 font-medium">
+                  Source: {hoveredPoint.snapshot.source}
+                </div>
+              )}
               {hoveredPoint.snapshot.note && (
                 <div className="text-[10px] text-neutral-400 dark:text-neutral-500 italic mt-1 border-t border-neutral-700/60 dark:border-neutral-200/60 pt-1">
                   "{hoveredPoint.snapshot.note}"
@@ -936,6 +874,22 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
                         {item.isHighest && (
                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300">
                             Launch Price
+                          </span>
+                        )}
+                        {item.source && (
+                          <span className="inline-flex items-center gap-1 text-[10px] text-neutral-600 dark:text-neutral-400 bg-neutral-100 dark:bg-neutral-800/80 px-2 py-0.5 rounded-md border border-neutral-200 dark:border-neutral-700">
+                            <span>Source: {item.source}</span>
+                            {item.sourceUrl && (
+                              <a
+                                href={item.sourceUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-[#FF6E40] hover:underline font-bold"
+                                title="View verified source listing"
+                              >
+                                ↗
+                              </a>
+                            )}
                           </span>
                         )}
                       </div>

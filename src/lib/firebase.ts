@@ -197,11 +197,21 @@ export const getStoredPriceHistory = (productId: string): PriceSnapshot[] => {
     if (raw) {
       const list = JSON.parse(raw);
       if (Array.isArray(list) && list.length > 0) {
-        // Discard any old legacy fake generic curve snapshots
+        // Discard any old legacy fake generic curve snapshots or previous test seeds
         const hasLegacyGenericFake = list.some((s: PriceSnapshot) =>
-          s.id && (s.id.startsWith('snap_intel_') || s.note?.includes('Recent weekend price point') || s.note?.includes('Mid-season promotional pricing'))
+          s.id && (
+            s.id.startsWith('snap_intel_') ||
+            s.note?.includes('Recent weekend price point') ||
+            s.note?.includes('Mid-season promotional pricing') ||
+            s.note?.includes('Standard retail pricing prior to mid-year sales') ||
+            s.note?.includes('Monsoon Kitchen Days markdown') ||
+            s.note?.includes('Initial launch price point') ||
+            s.note?.includes('Standard list price prior to mid-year sales')
+          )
         );
-        if (!hasLegacyGenericFake) {
+        if (hasLegacyGenericFake) {
+          localStorage.removeItem(`${STORAGE_PRICE_HISTORY_PREFIX}${productId}`);
+        } else {
           return list;
         }
       }
@@ -210,11 +220,9 @@ export const getStoredPriceHistory = (productId: string): PriceSnapshot[] => {
     console.warn('Price history storage read notice:', e);
   }
 
-  // 2. Check if background Gemini price intelligence has already cached product-specific points
+  // 2. Check if background Gemini price intelligence has already verified authentic points
   try {
-    const intelRaw =
-      localStorage.getItem(`pickasap_price_intel_v2_${productId}`) ||
-      localStorage.getItem(`pickasap_price_intel_${productId}`);
+    const intelRaw = localStorage.getItem(`pickasap_price_intel_v2_${productId}`);
     if (intelRaw) {
       const intel = JSON.parse(intelRaw);
       const points = Array.isArray(intel?.priceHistory) && intel.priceHistory.length > 0
@@ -222,53 +230,40 @@ export const getStoredPriceHistory = (productId: string): PriceSnapshot[] => {
         : Array.isArray(intel?.milestones) ? intel.milestones : [];
 
       if (intel?.isHistoricalDataAvailable && points.length > 1) {
-        const converted: PriceSnapshot[] = points.map((m: any, idx: number) => ({
-          id: `snap_hist_${productId}_${idx}_${new Date(m.date).getTime()}`,
-          productId,
-          price: m.price,
-          recordedAt: new Date(m.date).toISOString(),
-          source: 'background_intelligence',
-          note: m.note || 'Recorded verified price',
-          dropPercentage: m.dropPercentage,
-        }));
-        converted.sort((a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime());
-        setStoredPriceHistory(productId, converted);
-        return converted;
+        const hasOldFakes = points.some((p: any) =>
+          p.note?.includes('Standard retail pricing prior to mid-year sales') ||
+          p.note?.includes('Monsoon Kitchen Days markdown') ||
+          p.note?.includes('Initial launch price point')
+        );
+        if (hasOldFakes) {
+          localStorage.removeItem(`pickasap_price_intel_v2_${productId}`);
+        } else {
+          const converted: PriceSnapshot[] = points.map((m: any, idx: number) => ({
+            id: `snap_hist_${productId}_${idx}_${new Date(m.date).getTime()}`,
+            productId,
+            price: m.price,
+            recordedAt: new Date(m.date).toISOString(),
+            source: m.source || 'background_intelligence',
+            sourceUrl: m.sourceUrl,
+            note: m.note || 'Recorded verified price',
+            dropPercentage: m.dropPercentage,
+            isLowest: m.isLowest,
+            isHighest: m.isHighest,
+          }));
+          converted.sort((a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime());
+          setStoredPriceHistory(productId, converted);
+          return converted;
+        }
       }
     }
   } catch (e) {
     console.warn('Intelligence storage read notice:', e);
   }
 
-  // 3. Check if product definition itself has authentic priceHistory or priceIntelligence
+  // 3. Return verified baseline snapshot from initial product listing
   const products = getStoredProducts();
   const product = products.find((p) => p.id === productId);
   if (product) {
-    if (product.priceIntelligence && product.priceIntelligence.isHistoricalDataAvailable) {
-      try {
-        localStorage.setItem(`pickasap_price_intel_v2_${productId}`, JSON.stringify(product.priceIntelligence));
-      } catch (e) {
-        // ignore
-      }
-    }
-
-    if (Array.isArray(product.priceHistory) && product.priceHistory.length > 1) {
-      const converted: PriceSnapshot[] = product.priceHistory.map((m: any, idx: number) => ({
-        id: `snap_hist_${productId}_${idx}_${new Date(m.date).getTime()}`,
-        productId,
-        price: m.price,
-        recordedAt: new Date(m.date).toISOString(),
-        source: 'background_intelligence',
-        note: m.note || 'Recorded verified price',
-        dropPercentage: m.dropPercentage,
-        isLowest: m.isLowest,
-        isHighest: m.isHighest,
-      }));
-      converted.sort((a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime());
-      setStoredPriceHistory(productId, converted);
-      return converted;
-    }
-
     const current = product.currentPrice ?? parsePriceToNumber(product.price);
     if (current > 0) {
       const initialSnapshot: PriceSnapshot[] = [
@@ -278,7 +273,9 @@ export const getStoredPriceHistory = (productId: string): PriceSnapshot[] => {
           price: current,
           recordedAt: product.createdAt || new Date().toISOString(),
           source: 'initial',
-          note: 'Initial verified price point',
+          note: 'Initial verified listing price',
+          isLowest: true,
+          isHighest: true,
         },
       ];
       return initialSnapshot;
@@ -738,22 +735,13 @@ export const databaseService = {
         });
         if (items.length > 0) {
           items.sort((a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime());
-          const baseline = getStoredPriceHistory(productId);
-          const itemsFlat = items.length <= 1 || Math.max(...items.map((s) => s.price)) === Math.min(...items.map((s) => s.price));
-          const baselineRich = baseline.length > 1 && Math.max(...baseline.map((s) => s.price)) > Math.min(...baseline.map((s) => s.price));
-
-          if (itemsFlat && baselineRich) {
-            onData(baseline);
-          } else {
-            setStoredPriceHistory(productId, items);
-            onData(items);
-          }
+          const forThisProduct = items.filter((s) => !s.productId || s.productId === productId);
+          setStoredPriceHistory(productId, forThisProduct);
+          onData(forThisProduct);
         } else {
-          // If Firestore has no snapshots recorded yet (e.g. static Cloudflare Pages deployment), serve local baseline
+          // If Firestore has no snapshots recorded yet for this product, serve local product baseline
           const fallbackSnaps = getStoredPriceHistory(productId);
-          if (fallbackSnaps.length > 0) {
-            onData(fallbackSnaps);
-          }
+          onData(fallbackSnaps);
         }
       },
       (error) => {

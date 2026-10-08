@@ -114,7 +114,7 @@ function formatINR(val: number): string {
   return '₹' + val.toLocaleString('en-IN');
 }
 
-// Genuine Product-Specific Price Intelligence Research Engine using Gemini
+// Genuine Product-Specific Price Intelligence Research Engine using Gemini + Google Search Grounding
 async function fetchPriceIntelligenceFromGemini(params: {
   productId: string;
   title: string;
@@ -155,40 +155,48 @@ async function fetchPriceIntelligenceFromGemini(params: {
     return null;
   }
 
-  const systemInstruction = `You are an e-commerce price history research intelligence engine for an online curated shopping platform.
-Your task is to analyze the EXACT product provided and return its independent, product-specific price history dataset.
+  const todayIso = new Date().toISOString();
+  const todayDate = todayIso.split('T')[0];
 
-CRITICAL REQUIREMENTS:
-1. Treat every product as a completely separate and independent research request.
-2. NEVER reuse, copy, scale, transform, randomize, or modify the price-history pattern of another product.
-3. DO NOT use a fixed/template price-history array.
-4. DO NOT generate a generic price curve or formula.
-5. REAL VERIFIED DATA > COMPLETE GRAPH. Fabricated historical data is strictly prohibited.
-6. The requested historical data must correspond specifically to THAT exact product, distinguishing storage variants, RAM variants, colors, listing, model numbers, and generations.
-7. If reliable historical prices cannot be verified from reliable sources with reasonable confidence, you MUST set:
-   "isHistoricalDataAvailable": false,
-   "priceHistory": []
-8. If genuine historical prices can be verified, each observation MUST contain:
-   - "date": "YYYY-MM-DD"
-   - "price": number in INR
-   - "source": name of the specific verified marketplace, catalog, or archive source
-   - "sourceUrl": URL of the source if known (or null)
-   - "note": factual description of the observation
-9. Return structured JSON strictly adhering to the requested format.`;
+  const searchKeywords = [
+    `${title} price history India`,
+    `${title} ${modelIdentifier || asin || ''} historical price deal tracker Amazon India Flipkart`,
+    `${title} lowest price deal India`,
+  ].filter(Boolean);
 
-  const prompt = `Research and return the independent historical price data specifically for this exact product:
-Product ID: "${productId}"
-Product Name: "${title}"
-Brand: "${brand || ''}"
-Model Identifier: "${modelIdentifier || ''}"
-ASIN / SKU / Identifier: "${asin || ''}"
-Store / Marketplace: "${store || 'Online'}"
-Product URL: "${resolvedUrl || effectiveUrl || ''}"
-Current Price: ${currentPriceNum}
-Category: "${category || ''}"
-Description: "${(description || '').slice(0, 300)}"
+  const systemInstruction = `You are a strict, verified e-commerce price history research intelligence engine for an online curated shopping platform.
+You have the Google Search tool enabled. You MUST use Google Search to find real, verifiable historical price data.
 
-REQUIRED RESPONSE FORMAT:
+CRITICAL GROUNDING & VERIFICATION REQUIREMENTS:
+1. USE GOOGLE SEARCH: You MUST perform search queries to find real web sources.
+2. ZERO HALLUCINATION: NEVER invent, estimate, interpolate, or extrapolate historical prices from model memory.
+3. REAL RETRIEVED SOURCES ONLY: Every historical price observation you report MUST come directly from an actual web source retrieved during this search session.
+4. CURRENT LISTING ≠ HISTORICAL EVIDENCE: A current product listing showing today's price (${currentPriceNum} INR) is NOT evidence of a past historical price. Do NOT claim today's price was the price months or years ago.
+5. STRICT PRODUCT MATCHING: Ensure the retrieved price refers to this EXACT product (${title}), matching storage, RAM, variant, model number (${modelIdentifier || 'standard'}), and region (India). Do NOT use prices from a different variant, different storage capacity, or different product generation.
+6. SOURCE CITATION: For every observation, you MUST include the exact source URL retrieved from Google Search, the name of the source (e.g. PriceBefore, Smartprix, Buyhatke, 91mobiles, retailer sale archive), and quote/describe the specific historical evidence in "evidence".
+7. IF NO RELIABLE HISTORICAL EVIDENCE EXISTS: You MUST set "isHistoricalDataAvailable": false and "priceHistory": []. Do not generate synthetic points to make a complete graph. Real data > complete graph.
+8. RETURN STRUCTURED JSON adhering to the specified format.`;
+
+  const prompt = `Perform Google Search research for the historical price records of this exact product:
+
+PRODUCT IDENTITY:
+- Product ID: "${productId}"
+- Exact Title: "${title}"
+- Brand: "${brand || ''}"
+- Model Identifier: "${modelIdentifier || ''}"
+- ASIN / SKU: "${asin || ''}"
+- Store / Marketplace: "${store || 'Online'}"
+- Product URL: "${resolvedUrl || effectiveUrl || ''}"
+- Current Active Price: ${currentPriceNum} INR
+- Category: "${category || ''}"
+- Description: "${(description || '').slice(0, 300)}"
+- Today's Date: "${todayDate}"
+
+SEARCH TARGETS:
+Search the web for historical price tracking, price drops, past sales (e.g. Diwali, Big Billion Days, Great Indian Festival, Summer Sale), or launch pricing for this exact product:
+- ${searchKeywords.join('\n- ')}
+
+REQUIRED JSON RESPONSE FORMAT:
 {
   "productId": "${productId}",
   "productName": "${title.replace(/"/g, '\\"')}",
@@ -200,24 +208,55 @@ REQUIRED RESPONSE FORMAT:
     {
       "date": "YYYY-MM-DD",
       "price": number,
-      "source": "string",
-      "sourceUrl": "string or null",
-      "note": "string"
+      "source": "string (name of retrieved source)",
+      "sourceUrl": "string (exact URL retrieved via Google Search)",
+      "evidence": "string (specific evidence found on that page)",
+      "note": "string (historical observation note)"
     }
   ]
 }`;
 
   const models = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
+  let quotaExceededError = false;
+
   for (const model of models) {
     try {
+      console.log(`[PriceIntelligence] Invoking Google Search grounding on ${model} for "${title}"`);
       const response = await ai.models.generateContent({
         model,
         contents: prompt,
         config: {
           systemInstruction,
-          responseMimeType: 'application/json',
+          // REAL GOOGLE SEARCH GROUNDING TOOL ENABLED
+          tools: [{ googleSearch: {} }],
         },
       });
+
+      // 1. Inspect Grounding Metadata
+      const candidate = response.candidates?.[0];
+      const groundingMetadata = candidate?.groundingMetadata;
+      const searchQueries: string[] = (groundingMetadata as any)?.webSearchQueries || [];
+      const groundingChunks: any[] = (groundingMetadata as any)?.groundingChunks || [];
+
+      // Extract verified web sources and build URL & Domain whitelists
+      const retrievedWebSources: Array<{ title: string; url: string }> = [];
+      const verifiedUrlSet = new Set<string>();
+      const verifiedDomainSet = new Set<string>();
+
+      for (const chunk of groundingChunks) {
+        const uri = chunk.web?.uri;
+        const chunkTitle = chunk.web?.title || '';
+        if (uri) {
+          retrievedWebSources.push({ title: chunkTitle, url: uri });
+          verifiedUrlSet.add(uri.toLowerCase());
+          try {
+            const u = new URL(uri);
+            verifiedDomainSet.add(u.hostname.toLowerCase().replace(/^www\./, ''));
+          } catch {}
+        }
+      }
+
+      console.log(`[PriceIntelligence] Grounding returned ${searchQueries.length} search queries and ${groundingChunks.length} retrieved web chunks.`);
 
       const text = response.text;
       if (text) {
@@ -226,20 +265,111 @@ REQUIRED RESPONSE FORMAT:
           parsed.productId = productId;
           if (!parsed.productName) parsed.productName = title;
           if (!parsed.currentPrice) parsed.currentPrice = currentPriceNum;
-          if (!Array.isArray(parsed.priceHistory)) parsed.priceHistory = [];
 
-          priceHistoryCacheByProductId.set(productId, parsed);
-          return parsed;
+          const rawPoints = Array.isArray(parsed.priceHistory) ? parsed.priceHistory : [];
+
+          // STRICT GROUNDING VALIDATION:
+          // An observation is accepted ONLY if its sourceUrl comes from an actual grounding chunk
+          // or is grounded in a verified domain retrieved by Google Search!
+          const verifiedPoints = rawPoints.filter((p: any) => {
+            const price = parsePrice(p.price);
+            if (price <= 0 || !p.date) return false;
+
+            const url = (p.sourceUrl || '').trim().toLowerCase();
+            if (!url) return false;
+
+            // Check if URL matches a retrieved grounding chunk URI
+            const hasExactUrl = verifiedUrlSet.has(url);
+            let hasMatchingDomain = false;
+            try {
+              const u = new URL(url);
+              const host = u.hostname.toLowerCase().replace(/^www\./, '');
+              hasMatchingDomain = verifiedDomainSet.has(host);
+            } catch {}
+
+            const isGrounded = hasExactUrl || hasMatchingDomain;
+            if (!isGrounded) {
+              console.warn(`[PriceIntelligence] REJECTED ungrounded source claim: "${p.source}" (${p.sourceUrl}) - not found in Google Search grounding chunks.`);
+              return false;
+            }
+
+            // Do not accept a current listing page that merely states current price as evidence of historical price
+            if (p.date === todayDate && price === currentPriceNum && !p.evidence) {
+              return false;
+            }
+
+            return true;
+          });
+
+          const isHistoricalDataAvailable = Boolean(parsed.isHistoricalDataAvailable) && verifiedPoints.length >= 2;
+
+          const auditData = {
+            productId,
+            productName: parsed.productName,
+            currentPrice: currentPriceNum,
+            isHistoricalDataAvailable,
+            uncertaintyNote: isHistoricalDataAvailable
+              ? null
+              : parsed.uncertaintyNote || 'Insufficient verified historical pricing records found via Google Search grounding.',
+            summaryNote: parsed.summaryNote || (isHistoricalDataAvailable ? 'Verified from Google Search grounding.' : 'Historical data unavailable.'),
+            priceHistory: isHistoricalDataAvailable ? verifiedPoints : [],
+            grounding: {
+              searchInvoked: true,
+              searchQueries,
+              sources: retrievedWebSources,
+              groundingChunksCount: groundingChunks.length,
+              verifiedObservationsCount: verifiedPoints.length,
+              status: isHistoricalDataAvailable ? 'grounded_and_verified' : 'no_historical_evidence_found',
+              quotaNotice: null,
+            },
+          };
+
+          priceHistoryCacheByProductId.set(productId, auditData);
+          return auditData;
         }
       }
     } catch (err: any) {
-      console.warn(`Gemini price history research attempt with ${model}:`, err?.status || err?.message || err);
-      // Wait briefly before attempting model fallback if temporary 503 spike occurs
-      await new Promise((resolve) => setTimeout(resolve, 600));
+      const status = err?.status || (err?.message?.includes('429') ? 429 : null);
+      const isQuota = status === 429 || String(err?.message || '').includes('quota') || String(err?.message || '').includes('RESOURCE_EXHAUSTED');
+      if (isQuota) {
+        quotaExceededError = true;
+        // Log friendly informational notice instead of noisy unhandled error
+        console.info(`[PriceIntelligence] Google Search grounding quota limit reached on ${model} (429 RESOURCE_EXHAUSTED).`);
+        break; // Quota is per-project across all models; no need to repeatedly spam 429 errors
+      } else {
+        console.warn(`[PriceIntelligence] Google Search grounding attempt notice with ${model}:`, err?.status || err?.message || err);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 400));
     }
   }
 
-  return null;
+  // If Google Search grounding failed or quota was exceeded, ZERO HALLUCINATION rule applies:
+  // Return isHistoricalDataAvailable: false, zero points, and explicit audit explanation.
+  const emptyAudit = {
+    productId,
+    productName: title,
+    currentPrice: currentPriceNum,
+    isHistoricalDataAvailable: false,
+    uncertaintyNote: quotaExceededError
+      ? 'Google Search grounding API quota limit was reached (429 RESOURCE_EXHAUSTED). To ensure zero hallucinations, unverified historical prices are strictly withheld.'
+      : 'Google Search did not retrieve verifiable historical price evidence for this specific product.',
+    summaryNote: 'Historical price tracking is active. Historical records require verified Google Search grounding evidence.',
+    priceHistory: [],
+    grounding: {
+      searchInvoked: true,
+      searchQueries: [],
+      sources: [],
+      groundingChunksCount: 0,
+      verifiedObservationsCount: 0,
+      status: quotaExceededError ? 'search_quota_exceeded' : 'no_historical_evidence_found',
+      quotaNotice: quotaExceededError
+        ? 'Grounding with Google Search requires billing quota on Google AI Studio / Cloud project ($35/1k requests).'
+        : null,
+    },
+  };
+
+  priceHistoryCacheByProductId.set(productId, emptyAudit);
+  return emptyAudit;
 }
 
 // -------------------------------------------------------------
@@ -309,10 +439,11 @@ app.post('/api/price-history/fetch', async (req, res) => {
     if (parsedData) {
       const isAvailable = Boolean(parsedData.isHistoricalDataAvailable);
       const rawPoints = Array.isArray(parsedData.priceHistory) ? parsedData.priceHistory : [];
-      const validPoints = isAvailable
+      const routeToday = new Date().toISOString().split('T')[0];
+      let validPoints = isAvailable
         ? rawPoints
             .map((p: any) => ({
-              date: p.date || new Date().toISOString().split('T')[0],
+              date: p.date || routeToday,
               price: parsePrice(p.price),
               source: p.source || (p.note ? 'Verified Archive' : 'Listing'),
               sourceUrl: p.sourceUrl || null,
@@ -321,6 +452,20 @@ app.post('/api/price-history/fetch', async (req, res) => {
             .filter((p: any) => p.price > 0 && p.source)
             .sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime())
         : [];
+
+      // Ensure the dataset reaches till today's date!
+      if (isAvailable && validPoints.length > 0 && currentPriceNum > 0) {
+        const lastPoint = validPoints[validPoints.length - 1];
+        if (lastPoint.date !== routeToday) {
+          validPoints.push({
+            date: routeToday,
+            price: currentPriceNum,
+            source: store || 'Active Store Listing',
+            sourceUrl: effectiveUrl || null,
+            note: 'Current listed price as of today',
+          });
+        }
+      }
 
       if (isAvailable && validPoints.length >= 2) {
         const prices = validPoints.map((p: any) => p.price);
@@ -335,6 +480,7 @@ app.post('/api/price-history/fetch', async (req, res) => {
           formattedPrice: formatINR(p.price),
           source: p.source,
           sourceUrl: p.sourceUrl,
+          evidence: p.evidence,
           note: p.note,
           dropPercentage: high > p.price ? `${Math.round(((high - p.price) / high) * 100)}% drop` : undefined,
           isLowest: p.price === low,
@@ -357,7 +503,8 @@ app.post('/api/price-history/fetch', async (req, res) => {
           currency: '₹',
           isHistoricalDataAvailable: true,
           uncertaintyNote: null,
-          summaryNote: parsedData.summaryNote || `Verified product-specific price trajectory ranging from ${formatINR(low)} to ${formatINR(high)}.`,
+          summaryNote: parsedData.summaryNote || `Verified price trajectory from ${formatINR(low)} to ${formatINR(high)}.`,
+          grounding: parsedData.grounding || null,
           priceHistory: validPoints,
           milestones,
         };
@@ -389,6 +536,7 @@ app.post('/api/price-history/fetch', async (req, res) => {
             isHistoricalDataAvailable: false,
             uncertaintyNote: parsedData.uncertaintyNote || 'Historical price data unavailable from verified sources for this specific product listing.',
             summaryNote: `Current listing price is ${formatINR(currentPriceNum)}. Historical price tracking is active.`,
+            grounding: parsedData.grounding || null,
             priceHistory: [],
             milestones: [],
           },

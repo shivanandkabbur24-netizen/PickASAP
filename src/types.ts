@@ -9,6 +9,7 @@ export interface PriceSnapshot {
   recordedAt: string;
   source: 'initial' | 'admin_verified' | 'community_update' | 'trusted_user' | 'background_intelligence' | string;
   sourceUrl?: string;
+  evidence?: string;
   note?: string;
   submittedBy?: string;
   approvalMethod?: ApprovalMethod;
@@ -25,6 +26,7 @@ export interface PriceMilestone {
   note: string;
   source?: string;
   sourceUrl?: string;
+  evidence?: string;
   dropPercentage?: string;
   isLowest?: boolean;
   isHighest?: boolean;
@@ -73,10 +75,21 @@ export interface PriceHistoryPoint {
   price: number;
   source?: string;
   sourceUrl?: string;
+  evidence?: string;
   note?: string;
   dropPercentage?: string;
   isLowest?: boolean;
   isHighest?: boolean;
+}
+
+export interface GroundingAuditMetadata {
+  searchInvoked: boolean;
+  searchQueries: string[];
+  sources: Array<{ title: string; url: string }>;
+  groundingChunksCount: number;
+  verifiedObservationsCount?: number;
+  status: 'grounded_and_verified' | 'search_quota_exceeded' | 'no_historical_evidence_found' | string;
+  quotaNotice?: string | null;
 }
 
 export interface PriceIntelligenceData {
@@ -99,6 +112,7 @@ export interface PriceIntelligenceData {
   summaryNote?: string;
   isHistoricalDataAvailable?: boolean;
   uncertaintyNote?: string | null;
+  grounding?: GroundingAuditMetadata;
   priceHistory: PriceHistoryPoint[];
   milestones?: PriceMilestone[];
 }

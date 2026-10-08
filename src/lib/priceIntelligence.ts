@@ -1,7 +1,37 @@
 import { PriceIntelligenceData, PriceSnapshot, PriceMilestone, PriceHistoryPoint } from '../types';
 import { databaseService, getStoredPriceHistory, setStoredPriceHistory } from './firebase';
 
-const CACHE_PREFIX = 'pickasap_price_intel_v2_';
+const CACHE_PREFIX = 'pickasap_price_intel_v5_';
+
+// Proactively purge old unverified v1-v4 caches
+export function purgeLegacyPriceCaches() {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return;
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (
+        k &&
+        (k.startsWith('pickasap_price_intel_v1_') ||
+          k.startsWith('pickasap_price_intel_v2_') ||
+          k.startsWith('pickasap_price_intel_v3_') ||
+          k.startsWith('pickasap_price_intel_v4_') ||
+          k.startsWith('pickasap_price_history_v1_') ||
+          k.startsWith('pickasap_price_history_v2_') ||
+          k.startsWith('pickasap_price_history_v3_') ||
+          k.startsWith('pickasap_price_history_v4_'))
+      ) {
+        keysToRemove.push(k);
+      }
+    }
+    keysToRemove.forEach((k) => localStorage.removeItem(k));
+  } catch (err) {
+    console.warn('Error purging legacy price caches:', err);
+  }
+}
+
+// Run purge on module load
+purgeLegacyPriceCaches();
 
 // Client-side Product Baseline Generator (strictly product-specific; NEVER a shared template curve or fake history)
 export function generateClientPriceHistory(product: {
@@ -38,42 +68,63 @@ export function generateClientPriceHistory(product: {
   const formatPrice = (p: number) => `${currency}${p.toLocaleString('en-IN')}`;
 
   // If the product has authentic sourced history points
-  if (Array.isArray(product.priceHistory) && product.priceHistory.length > 1) {
-    const prices = product.priceHistory.map((p) => p.price);
-    const low = Math.min(...prices);
-    const high = Math.max(...prices);
-    const avg = Math.round(prices.reduce((sum, v) => sum + v, 0) / prices.length);
-    const lastPrice = product.priceHistory[product.priceHistory.length - 1].price || current;
+  if (Array.isArray(product.priceHistory) && product.priceHistory.length > 0) {
+    const todayIso = new Date().toISOString();
+    const todayDateStr = todayIso.split('T')[0];
 
-    return {
-      productId: product.id,
-      productName: product.title || 'Verified Product',
-      productTitle: product.title || 'Verified Product',
-      currentPrice: lastPrice,
-      formattedCurrentPrice: formatPrice(lastPrice),
-      lowestPrice: low,
-      formattedLowestPrice: formatPrice(low),
-      highestPrice: high,
-      formattedHighestPrice: formatPrice(high),
-      averagePrice: avg,
-      formattedAveragePrice: formatPrice(avg),
-      currency,
-      isHistoricalDataAvailable: true,
-      uncertaintyNote: null,
-      summaryNote: `Verified product-specific price trajectory ranging from ${formatPrice(low)} to ${formatPrice(high)}.`,
-      priceHistory: product.priceHistory,
-      milestones: product.priceHistory.map((p) => ({
-        date: p.date,
-        price: p.price,
-        formattedPrice: formatPrice(p.price),
-        source: p.source,
-        sourceUrl: p.sourceUrl,
-        note: p.note || 'Verified historical observation',
-        dropPercentage: high > p.price ? `${Math.round(((high - p.price) / high) * 100)}% drop` : undefined,
-        isLowest: p.price === low,
-        isHighest: p.price === high,
-      })),
-    };
+    let points = [...product.priceHistory]
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+    // Ensure the points reach till today's date
+    if (points.length > 0 && current > 0) {
+      const lastPoint = points[points.length - 1];
+      if (lastPoint.date !== todayDateStr) {
+        points.push({
+          date: todayDateStr,
+          price: current,
+          source: product.store || 'Active Store Listing',
+          note: 'Current listed price as of today',
+        });
+      }
+    }
+
+    if (points.length > 1) {
+      const prices = points.map((p) => p.price);
+      const low = Math.min(...prices);
+      const high = Math.max(...prices);
+      const avg = Math.round(prices.reduce((sum, v) => sum + v, 0) / prices.length);
+      const lastPrice = points[points.length - 1].price || current;
+
+      return {
+        productId: product.id,
+        productName: product.title || 'Verified Product',
+        productTitle: product.title || 'Verified Product',
+        currentPrice: lastPrice,
+        formattedCurrentPrice: formatPrice(lastPrice),
+        lowestPrice: low,
+        formattedLowestPrice: formatPrice(low),
+        highestPrice: high,
+        formattedHighestPrice: formatPrice(high),
+        averagePrice: avg,
+        formattedAveragePrice: formatPrice(avg),
+        currency,
+        isHistoricalDataAvailable: true,
+        uncertaintyNote: null,
+        summaryNote: `Verified product-specific price trajectory ranging from ${formatPrice(low)} to ${formatPrice(high)}.`,
+        priceHistory: points,
+        milestones: points.map((p) => ({
+          date: p.date,
+          price: p.price,
+          formattedPrice: formatPrice(p.price),
+          source: p.source,
+          sourceUrl: p.sourceUrl,
+          note: p.note || 'Verified historical observation',
+          dropPercentage: high > p.price ? `${Math.round(((high - p.price) / high) * 100)}% drop` : undefined,
+          isLowest: p.price === low,
+          isHighest: p.price === high,
+        })),
+      };
+    }
   }
 
   // When no verified historical records exist: clearly state historical data is unavailable
@@ -105,7 +156,7 @@ export function getCachedPriceIntelligence(productId: string): PriceIntelligence
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed && parsed.productId === productId) {
-        // Discard any legacy mock/fake test datasets
+        // Discard any legacy mock/fake test datasets or stale points that don't reach today
         const points = Array.isArray(parsed.priceHistory) ? parsed.priceHistory : [];
         const hasLegacyFakes = points.some((p: any) =>
           p.note?.includes('Monsoon Kitchen Days') ||
@@ -117,6 +168,16 @@ export function getCachedPriceIntelligence(productId: string): PriceIntelligence
         if (hasLegacyFakes) {
           localStorage.removeItem(`${CACHE_PREFIX}${productId}`);
           return null;
+        }
+
+        // If dataset has historical points but doesn't reach today's date, invalidate to fetch up to date
+        const todayStr = new Date().toISOString().split('T')[0];
+        if (points.length > 0) {
+          const lastPoint = points[points.length - 1];
+          if (lastPoint && lastPoint.date !== todayStr) {
+            localStorage.removeItem(`${CACHE_PREFIX}${productId}`);
+            return null;
+          }
         }
         return parsed;
       }
@@ -178,6 +239,7 @@ export async function fetchBackgroundPriceHistory(product: {
         recordedAt: new Date(p.date).toISOString(),
         source: p.source || 'background_intelligence',
         sourceUrl: p.sourceUrl,
+        evidence: p.evidence,
         note: p.note || 'Recorded verified price',
         dropPercentage: p.dropPercentage,
         isLowest: p.isLowest,
@@ -217,7 +279,7 @@ export async function fetchBackgroundPriceHistory(product: {
   let fetchedData: PriceIntelligenceData | null = null;
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    const timeoutId = setTimeout(() => controller.abort(), 45000);
 
     const response = await fetch('/api/price-history/fetch', {
       method: 'POST',

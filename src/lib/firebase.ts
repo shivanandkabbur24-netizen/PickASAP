@@ -188,7 +188,7 @@ const STORAGE_PRODUCTS = 'pickasap_products_v1';
 const STORAGE_CLICKS = 'pickasap_clicks_v1';
 const STORAGE_USER = 'pickasap_current_user_v2';
 const STORAGE_FAVORITES = 'pickasap_favorites_v1';
-const STORAGE_PRICE_HISTORY_PREFIX = 'pickasap_price_history_v2_';
+const STORAGE_PRICE_HISTORY_PREFIX = 'pickasap_price_history_v5_';
 
 export const getStoredPriceHistory = (productId: string): PriceSnapshot[] => {
   // 1. Try reading stored snapshots from localStorage
@@ -197,7 +197,7 @@ export const getStoredPriceHistory = (productId: string): PriceSnapshot[] => {
     if (raw) {
       const list = JSON.parse(raw);
       if (Array.isArray(list) && list.length > 0) {
-        // Discard any old legacy fake generic curve snapshots or previous test seeds
+        // Discard any old legacy fake generic curve snapshots
         const hasLegacyGenericFake = list.some((s: PriceSnapshot) =>
           s.id && (
             s.id.startsWith('snap_intel_') ||
@@ -222,7 +222,7 @@ export const getStoredPriceHistory = (productId: string): PriceSnapshot[] => {
 
   // 2. Check if background Gemini price intelligence has already verified authentic points
   try {
-    const intelRaw = localStorage.getItem(`pickasap_price_intel_v2_${productId}`);
+    const intelRaw = localStorage.getItem(`pickasap_price_intel_v5_${productId}`);
     if (intelRaw) {
       const intel = JSON.parse(intelRaw);
       const points = Array.isArray(intel?.priceHistory) && intel.priceHistory.length > 0
@@ -236,7 +236,7 @@ export const getStoredPriceHistory = (productId: string): PriceSnapshot[] => {
           p.note?.includes('Initial launch price point')
         );
         if (hasOldFakes) {
-          localStorage.removeItem(`pickasap_price_intel_v2_${productId}`);
+          localStorage.removeItem(`pickasap_price_intel_v5_${productId}`);
         } else {
           const converted: PriceSnapshot[] = points.map((m: any, idx: number) => ({
             id: `snap_hist_${productId}_${idx}_${new Date(m.date).getTime()}`,
@@ -245,6 +245,7 @@ export const getStoredPriceHistory = (productId: string): PriceSnapshot[] => {
             recordedAt: new Date(m.date).toISOString(),
             source: m.source || 'background_intelligence',
             sourceUrl: m.sourceUrl,
+            evidence: m.evidence,
             note: m.note || 'Recorded verified price',
             dropPercentage: m.dropPercentage,
             isLowest: m.isLowest,
@@ -260,7 +261,7 @@ export const getStoredPriceHistory = (productId: string): PriceSnapshot[] => {
     console.warn('Intelligence storage read notice:', e);
   }
 
-  // 3. Return verified baseline snapshot from initial product listing
+  // 3. Return verified baseline snapshot from initial product listing (anchored to today's date)
   const products = getStoredProducts();
   const product = products.find((p) => p.id === productId);
   if (product) {
@@ -271,8 +272,8 @@ export const getStoredPriceHistory = (productId: string): PriceSnapshot[] => {
           id: `snap_init_${productId}`,
           productId,
           price: current,
-          recordedAt: product.createdAt || new Date().toISOString(),
-          source: 'initial',
+          recordedAt: new Date().toISOString(),
+          source: product.store || 'initial',
           note: 'Initial verified listing price',
           isLowest: true,
           isHighest: true,

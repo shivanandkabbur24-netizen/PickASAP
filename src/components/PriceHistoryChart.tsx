@@ -57,6 +57,7 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
   const [snapshots, setSnapshots] = useState<PriceSnapshot[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
+  const [isResearching, setIsResearching] = useState<boolean>(true);
   const [timeRange, setTimeRange] = useState<'30d' | '90d' | 'all'>('all');
   const [intelligence, setIntelligence] = useState<PriceIntelligenceData | null>(() => {
     const cached = getCachedPriceIntelligence(productId);
@@ -73,6 +74,7 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
   const runBackgroundPriceFetch = useCallback(async () => {
     if (!productId) return;
     setRefreshing(true);
+    setIsResearching(true);
     const prodPayload = {
       id: productId,
       title: product?.title || '',
@@ -98,6 +100,7 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
       console.warn('Background price fetch notice:', err);
     } finally {
       setRefreshing(false);
+      setIsResearching(false);
     }
   }, [productId, product, currentPrice]);
 
@@ -105,6 +108,7 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
   useEffect(() => {
     let isMounted = true;
     setLoading(true);
+    setIsResearching(true);
 
     const unsubscribe = db.subscribeToPriceHistory(productId, (data) => {
       if (isMounted) {
@@ -132,12 +136,18 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
 
     fetchBackgroundPriceHistory(prodPayload)
       .then((result) => {
-        if (isMounted && result) {
-          setIntelligence(result);
+        if (isMounted) {
+          if (result) {
+            setIntelligence(result);
+          }
+          setIsResearching(false);
         }
       })
       .catch((err) => {
         console.warn('Background price history prefetch notice:', err);
+        if (isMounted) {
+          setIsResearching(false);
+        }
       });
 
     // Listen to local optimistic snapshot events
@@ -175,41 +185,91 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
   }, [snapshots]);
 
   // Determine effective snapshots strictly from THIS product's verified dataset
-  // NEVER use a shared template or fabricated wave curve
+  // NEVER use a shared template or fabricated wave curve; data must be current till today's date
   const effectiveSnapshots = useMemo(() => {
     const intel = intelligence || getCachedPriceIntelligence(productId);
+    const activeCurrentPrice =
+      typeof currentPrice === 'number' && currentPrice > 0
+        ? currentPrice
+        : product?.currentPrice || (product?.price ? parseFloat(String(product.price).replace(/[^0-9.]/g, '')) : 0) || 0;
+
+    const todayIso = new Date().toISOString();
+    const todayDateStr = todayIso.split('T')[0];
+
+    let rawSnaps: PriceSnapshot[] = [];
 
     // 1. If Gemini price intelligence has verified historical points for THIS specific product:
     const intelPoints = intel?.priceHistory;
     if (intel?.isHistoricalDataAvailable && Array.isArray(intelPoints) && intelPoints.length > 0) {
-      const milestoneSnaps: PriceSnapshot[] = intelPoints.map((m: any, idx: number) => ({
-        id: `snap_hist_${productId}_${idx}_${new Date(m.date).getTime()}`,
-        productId,
-        price: m.price,
-        recordedAt: new Date(m.date).toISOString(),
-        source: m.source || 'verified_intelligence',
-        sourceUrl: m.sourceUrl,
-        note: m.note || 'Recorded verified price',
-        dropPercentage: m.dropPercentage,
-        isLowest: m.isLowest,
-        isHighest: m.isHighest,
-      }));
-
-      return milestoneSnaps.sort(
-        (a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime()
-      );
+      rawSnaps = intelPoints
+        .filter((m: any) => m && m.price > 0 && m.date)
+        .map((m: any, idx: number) => ({
+          id: `snap_hist_${productId}_${idx}_${new Date(m.date).getTime()}`,
+          productId,
+          price: m.price,
+          recordedAt: new Date(m.date).toISOString(),
+          source: m.source || 'verified_intelligence',
+          sourceUrl: m.sourceUrl,
+          evidence: m.evidence,
+          note: m.note || 'Recorded verified price',
+          dropPercentage: m.dropPercentage,
+          isLowest: m.isLowest,
+          isHighest: m.isHighest,
+        }));
+    } else if (Array.isArray(snapshots) && snapshots.length > 0) {
+      // 2. Otherwise check snapshots from Firestore for THIS exact productId
+      rawSnaps = snapshots
+        .filter((s) => !s.productId || s.productId === productId)
+        .filter((s) => s && s.price > 0 && s.recordedAt)
+        .map((s) => ({
+          ...s,
+          evidence: s.evidence,
+        }));
     }
 
-    // 2. Otherwise check snapshots from Firestore for THIS exact productId
-    if (Array.isArray(snapshots) && snapshots.length > 0) {
-      const forThisProduct = snapshots.filter((s) => !s.productId || s.productId === productId);
-      return forThisProduct.sort(
-        (a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime()
-      );
+    // Sort chronologically
+    rawSnaps.sort(
+      (a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime()
+    );
+
+    // CRITICAL: Ensure dataset is completely up to date till today's date!
+    // The active listing price must represent today's observation on the graph.
+    if (activeCurrentPrice > 0) {
+      if (rawSnaps.length === 0) {
+        rawSnaps.push({
+          id: `snap_today_${productId}`,
+          productId,
+          price: activeCurrentPrice,
+          recordedAt: todayIso,
+          source: product?.store || 'Active Store Listing',
+          note: 'Current listed price as of today',
+          isLowest: true,
+          isHighest: true,
+        });
+      } else {
+        const lastSnap = rawSnaps[rawSnaps.length - 1];
+        const lastSnapDateStr = new Date(lastSnap.recordedAt).toISOString().split('T')[0];
+
+        // If the last observation is before today, append today's active listed price
+        if (lastSnapDateStr !== todayDateStr) {
+          rawSnaps.push({
+            id: `snap_today_${productId}`,
+            productId,
+            price: activeCurrentPrice,
+            recordedAt: todayIso,
+            source: product?.store || 'Active Store Listing',
+            note: 'Current listed price as of today',
+            isLowest: activeCurrentPrice <= Math.min(...rawSnaps.map((s) => s.price)),
+            isHighest: activeCurrentPrice >= Math.max(...rawSnaps.map((s) => s.price)),
+          });
+        }
+      }
     }
 
-    return [];
-  }, [snapshots, intelligence, productId]);
+    return rawSnaps.sort(
+      (a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime()
+    );
+  }, [snapshots, intelligence, productId, currentPrice, product]);
 
   // Format date nicely
   const formatDate = (isoOrDateStr: string | number) => {
@@ -298,10 +358,64 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
   const paddingX = 55;
   const paddingY = 35;
 
-  // Chart renders ONLY when at least 2 genuine observations exist for this exact product
+  // Chart renders authentic observations (0, 1, or 2+) without inventing synthetic points
   const chartData = useMemo(() => {
-    if (displaySnapshots.length < 2) return null;
+    const innerWidth = svgWidth - paddingX * 2;
+    const innerHeight = svgHeight - paddingY * 2;
 
+    // Case 0: No historical snapshots yet
+    if (displaySnapshots.length === 0) {
+      const basePrice = stats.current || 1000;
+      const topP = Math.round(basePrice * 1.15);
+      const botP = Math.round(basePrice * 0.85);
+      const gridYValues = [
+        { price: topP, y: paddingY + 15 },
+        { price: basePrice, y: svgHeight / 2 },
+        { price: botP, y: svgHeight - paddingY - 15 },
+      ];
+      return {
+        type: 'empty' as const,
+        points: [] as Array<{ x: number; y: number; snapshot: PriceSnapshot }>,
+        pathD: '',
+        areaD: '',
+        gridYValues,
+        minPrice: botP,
+        maxPrice: topP,
+        minTime: Date.now(),
+        maxTime: Date.now(),
+      };
+    }
+
+    // Case 1: Exactly 1 authentic observation (Initial Tracked Listing Price)
+    if (displaySnapshots.length === 1) {
+      const single = displaySnapshots[0];
+      const pPrice = single.price;
+      const time = new Date(single.recordedAt).getTime();
+      const x = paddingX + innerWidth / 2;
+      const y = svgHeight / 2;
+
+      const topP = Math.round(pPrice * 1.15);
+      const botP = Math.round(pPrice * 0.85);
+      const gridYValues = [
+        { price: topP, y: paddingY + 15 },
+        { price: pPrice, y: svgHeight / 2 },
+        { price: botP, y: svgHeight - paddingY - 15 },
+      ];
+
+      return {
+        type: 'single' as const,
+        points: [{ x, y, snapshot: single }],
+        pathD: `M ${paddingX} ${y} L ${svgWidth - paddingX} ${y}`,
+        areaD: '',
+        gridYValues,
+        minPrice: pPrice,
+        maxPrice: pPrice,
+        minTime: time,
+        maxTime: time,
+      };
+    }
+
+    // Case 2+: Multiple authentic verified observations
     const prices = displaySnapshots.map((s) => s.price);
     const minPrice = Math.min(...prices);
     const maxPrice = Math.max(...prices);
@@ -317,9 +431,6 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
     const minTime = Math.min(...times);
     const maxTime = Math.max(...times);
     const timeSpan = maxTime - minTime || 1;
-
-    const innerWidth = svgWidth - paddingX * 2;
-    const innerHeight = svgHeight - paddingY * 2;
 
     const points = displaySnapshots.map((s) => {
       const time = new Date(s.recordedAt).getTime();
@@ -352,8 +463,8 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
       { price: minPrice, y: svgHeight - paddingY - ((minPrice - yMin) / yRange) * innerHeight },
     ];
 
-    return { points, pathD, areaD, gridYValues, minPrice, maxPrice, minTime, maxTime };
-  }, [displaySnapshots]);
+    return { type: 'multi' as const, points, pathD, areaD, gridYValues, minPrice, maxPrice, minTime, maxTime };
+  }, [displaySnapshots, stats.current]);
 
   // All recorded milestones for THIS specific product
   const allMilestones: PriceMilestone[] = useMemo(() => {
@@ -601,134 +712,59 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
         </div>
       </div>
 
-      {/* Loading state */}
-      {loading && snapshots.length === 0 && (
-        <div className="h-48 flex items-center justify-center text-sm text-neutral-500">
-          <div className="animate-spin w-5 h-5 border-2 border-[#FF6E40] border-t-transparent rounded-full mr-2" />
-          Loading price history records...
+      {/* Non-blocking background research notice */}
+      {isResearching && (
+        <div className="flex items-center gap-2 text-xs text-neutral-500 bg-white dark:bg-neutral-900/60 rounded-xl border border-neutral-200/80 dark:border-neutral-800 px-3.5 py-2">
+          <RefreshCw className="w-3.5 h-3.5 text-[#FF6E40] animate-spin shrink-0" />
+          <span>Verifying external price history records...</span>
         </div>
       )}
 
-      {/* Case 0: Zero verified historical observations */}
-      {!loading && effectiveSnapshots.length === 0 && !chartData && (
-        <div
-          id="no-history-state"
-          className="p-5 sm:p-6 bg-white dark:bg-neutral-900/60 rounded-xl border border-neutral-200/80 dark:border-neutral-800 text-center"
+      {/* Primary SVG Price-History Graph Container (Always present in UI) */}
+      <div id="price-history-chart-canvas" className="relative bg-white dark:bg-neutral-900/80 rounded-xl border border-neutral-200 dark:border-neutral-800 p-2 sm:p-4 overflow-hidden">
+        <svg
+          viewBox={`0 0 ${svgWidth} ${svgHeight}`}
+          className="w-full h-44 sm:h-56 select-none"
+          onMouseLeave={() => setHoveredPoint(null)}
         >
-          <div className="w-10 h-10 mx-auto rounded-full bg-neutral-100 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 flex items-center justify-center text-neutral-500 mb-3">
-            <Info className="w-5 h-5" />
-          </div>
-          <h4 className="text-sm sm:text-base font-semibold text-neutral-800 dark:text-neutral-200">
-            Historical price data unavailable
-          </h4>
-          <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 max-w-md mx-auto">
-            {intelligence?.uncertaintyNote ||
-              'No verified historical price observations could be confirmed for this specific product listing. Real-time price tracking has been initiated at the current listed price, and verified points will be logged as price adjustments occur.'}
-          </p>
+          <defs>
+            <linearGradient id="priceGradient" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#FF6E40" stopOpacity="0.32" />
+              <stop offset="100%" stopColor="#FF6E40" stopOpacity="0.0" />
+            </linearGradient>
+          </defs>
 
-          <div className="mt-4 inline-flex flex-wrap items-center justify-center gap-3 bg-neutral-100 dark:bg-neutral-800/80 px-4 py-2 rounded-lg text-xs font-medium text-neutral-700 dark:text-neutral-300">
-            <span className="flex items-center gap-1.5">
-              <Tag className="w-3.5 h-3.5 text-[#FF6E40]" />
-              Current Listed Price:{' '}
-              <strong className="text-neutral-900 dark:text-white">
-                {formatPriceDisplay(stats.current, currency)}
-              </strong>
-            </span>
-            <span className="hidden sm:inline text-neutral-300 dark:text-neutral-600">|</span>
-            <span className="flex items-center gap-1.5 text-neutral-500 dark:text-neutral-400">
-              <Clock className="w-3.5 h-3.5" />
-              Real-time Tracking Active
-            </span>
-            <span className="hidden sm:inline text-neutral-300 dark:text-neutral-600">|</span>
-            <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              Verified Current Listing
-            </span>
-          </div>
-        </div>
-      )}
+          {/* Horizontal grid lines & price labels */}
+          {chartData.gridYValues.map((grid, idx) => (
+            <g key={`grid-${idx}`}>
+              <line
+                x1={paddingX}
+                y1={grid.y}
+                x2={svgWidth - paddingX}
+                y2={grid.y}
+                stroke="currentColor"
+                className="text-neutral-200 dark:text-neutral-800"
+                strokeDasharray="4 4"
+                strokeWidth="1"
+              />
+              <text
+                x={paddingX - 8}
+                y={grid.y + 3.5}
+                textAnchor="end"
+                className="fill-neutral-400 dark:fill-neutral-500 text-[10px] font-mono"
+              >
+                {formatPriceDisplay(grid.price, currency)}
+              </text>
+            </g>
+          ))}
 
-      {/* Case 1: Exactly 1 verified observation (Current/Initial Tracking State) */}
-      {!loading && effectiveSnapshots.length === 1 && !chartData && (
-        <div
-          id="single-snapshot-state"
-          className="p-5 sm:p-6 bg-white dark:bg-neutral-900/60 rounded-xl border border-neutral-200/80 dark:border-neutral-800 text-center"
-        >
-          <div className="w-10 h-10 mx-auto rounded-full bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 flex items-center justify-center text-emerald-600 dark:text-emerald-400 mb-3">
-            <ShieldCheck className="w-5 h-5" />
-          </div>
-          <h4 className="text-sm sm:text-base font-semibold text-neutral-800 dark:text-neutral-200">
-            Price Tracking Active (1 Observation)
-          </h4>
-          <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 max-w-md mx-auto">
-            Initial verified price point recorded for this exact product listing. A chronological trend graph will appear once additional verified price movements are detected.
-          </p>
-
-          <div className="mt-4 inline-flex flex-wrap items-center justify-center gap-3 bg-neutral-100 dark:bg-neutral-800/80 px-4 py-2 rounded-lg text-xs font-medium text-neutral-700 dark:text-neutral-300">
-            <span className="flex items-center gap-1.5">
-              <Tag className="w-3.5 h-3.5 text-[#FF6E40]" />
-              Tracked Price:{' '}
-              <strong className="text-neutral-900 dark:text-white">
-                {formatPriceDisplay(effectiveSnapshots[0].price, currency)}
-              </strong>
-            </span>
-            <span className="hidden sm:inline text-neutral-300 dark:text-neutral-600">|</span>
-            <span className="flex items-center gap-1.5 text-neutral-500 dark:text-neutral-400">
-              <Calendar className="w-3.5 h-3.5" />
-              Recorded: {formatDate(effectiveSnapshots[0].recordedAt)}
-            </span>
-            <span className="hidden sm:inline text-neutral-300 dark:text-neutral-600">|</span>
-            <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              {effectiveSnapshots[0].source || 'Verified Listing'}
-            </span>
-          </div>
-        </div>
-      )}
-
-      {/* Case 2+: Interactive Trend Chart plotting ONLY verified observations */}
-      {chartData && (
-        <div className="relative bg-white dark:bg-neutral-900/80 rounded-xl border border-neutral-200 dark:border-neutral-800 p-2 sm:p-4 overflow-hidden">
-          <svg
-            viewBox={`0 0 ${svgWidth} ${svgHeight}`}
-            className="w-full h-44 sm:h-56 select-none"
-            onMouseLeave={() => setHoveredPoint(null)}
-          >
-            <defs>
-              <linearGradient id="priceGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#FF6E40" stopOpacity="0.32" />
-                <stop offset="100%" stopColor="#FF6E40" stopOpacity="0.0" />
-              </linearGradient>
-            </defs>
-
-            {/* Horizontal grid lines & price labels */}
-            {chartData.gridYValues.map((grid, idx) => (
-              <g key={`grid-${idx}`}>
-                <line
-                  x1={paddingX}
-                  y1={grid.y}
-                  x2={svgWidth - paddingX}
-                  y2={grid.y}
-                  stroke="currentColor"
-                  className="text-neutral-200 dark:text-neutral-800"
-                  strokeDasharray="4 4"
-                  strokeWidth="1"
-                />
-                <text
-                  x={paddingX - 8}
-                  y={grid.y + 3.5}
-                  textAnchor="end"
-                  className="fill-neutral-400 dark:fill-neutral-500 text-[10px] font-mono"
-                >
-                  {formatPriceDisplay(grid.price, currency)}
-                </text>
-              </g>
-            ))}
-
-            {/* Gradient Area below curve */}
+          {/* Gradient Area below curve (Only when 2+ points exist) */}
+          {chartData.type === 'multi' && chartData.areaD && (
             <path d={chartData.areaD} fill="url(#priceGradient)" />
+          )}
 
-            {/* Primary Line curve */}
+          {/* Primary Line curve (Multi-point trend line or single baseline) */}
+          {chartData.type === 'multi' && chartData.pathD && (
             <path
               d={chartData.pathD}
               fill="none"
@@ -737,83 +773,196 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
               strokeLinecap="round"
               strokeLinejoin="round"
             />
-
-            {/* Interactive Data Dots along the path */}
-            {chartData.points.map((pt, idx) => {
-              const isHovered = hoveredPoint?.snapshot.id === pt.snapshot.id;
-              const isLowest = pt.snapshot.price === stats.lowest;
-              return (
-                <g key={`point-${pt.snapshot.id || idx}`}>
-                  <circle
-                    cx={pt.x}
-                    cy={pt.y}
-                    r="16"
-                    fill="transparent"
-                    className="cursor-pointer"
-                    onMouseEnter={() => setHoveredPoint(pt)}
-                    onTouchStart={() => setHoveredPoint(pt)}
-                  />
-
-                  <circle
-                    cx={pt.x}
-                    cy={pt.y}
-                    r={isHovered ? '6' : isLowest ? '5' : '4'}
-                    fill={isLowest ? '#10B981' : '#FF6E40'}
-                    stroke="#ffffff"
-                    strokeWidth={isHovered ? '2.5' : '2'}
-                    className="transition-all duration-150 pointer-events-none drop-shadow-xs"
-                  />
-                </g>
-              );
-            })}
-
-            {/* Dedicated X-Axis Timeline Labels from genuine observations */}
-            <g className="fill-neutral-400 dark:fill-neutral-500 text-[10px] font-sans select-none">
-              <text x={paddingX} y={svgHeight - 10} textAnchor="start">
-                {formatDate(chartData.minTime)}
-              </text>
-              {chartData.minTime !== chartData.maxTime && (
-                <text x={svgWidth / 2} y={svgHeight - 10} textAnchor="middle">
-                  {formatDate((chartData.minTime + chartData.maxTime) / 2)}
-                </text>
-              )}
-              <text x={svgWidth - paddingX} y={svgHeight - 10} textAnchor="end">
-                {formatDate(chartData.maxTime)}
-              </text>
-            </g>
-          </svg>
-
-          {/* Floating Tooltip when hovering over a snapshot dot */}
-          {hoveredPoint && (
-            <div
-              className="absolute z-20 pointer-events-none bg-neutral-900/95 dark:bg-white/95 text-white dark:text-neutral-900 px-3 py-2 rounded-lg shadow-xl text-xs backdrop-blur-xs border border-neutral-700 dark:border-neutral-200 transition-all duration-100 max-w-xs"
-              style={{
-                left: `${Math.min(
-                  Math.max(hoveredPoint.x * (100 / svgWidth) - 15, 5),
-                  72
-                )}%`,
-                top: `${Math.max(10, (hoveredPoint.y / svgHeight) * 100 - 35)}%`,
-              }}
-            >
-              <div className="font-bold text-sm text-[#FF6E40]">
-                {formatPriceDisplay(hoveredPoint.snapshot.price, currency)}
-              </div>
-              <div className="text-[11px] text-neutral-300 dark:text-neutral-600 mt-0.5 flex items-center gap-1">
-                <Calendar className="w-3 h-3" />
-                {formatDateTime(hoveredPoint.snapshot.recordedAt)}
-              </div>
-              {hoveredPoint.snapshot.source && (
-                <div className="text-[10px] text-emerald-400 dark:text-emerald-600 mt-0.5 font-medium">
-                  Source: {hoveredPoint.snapshot.source}
-                </div>
-              )}
-              {hoveredPoint.snapshot.note && (
-                <div className="text-[10px] text-neutral-400 dark:text-neutral-500 italic mt-1 border-t border-neutral-700/60 dark:border-neutral-200/60 pt-1">
-                  "{hoveredPoint.snapshot.note}"
-                </div>
-              )}
-            </div>
           )}
+
+          {chartData.type === 'single' && chartData.pathD && (
+            <path
+              d={chartData.pathD}
+              fill="none"
+              stroke="#FF6E40"
+              strokeWidth="1.5"
+              strokeDasharray="4 4"
+              strokeOpacity="0.45"
+            />
+          )}
+
+          {/* Interactive Data Dots along the path */}
+          {chartData.points.map((pt, idx) => {
+            const isHovered = hoveredPoint?.snapshot.id === pt.snapshot.id;
+            const isLowest = pt.snapshot.price === stats.lowest;
+            return (
+              <g key={`point-${pt.snapshot.id || idx}`}>
+                <circle
+                  cx={pt.x}
+                  cy={pt.y}
+                  r="16"
+                  fill="transparent"
+                  className="cursor-pointer"
+                  onMouseEnter={() => setHoveredPoint(pt)}
+                  onTouchStart={() => setHoveredPoint(pt)}
+                />
+
+                {chartData.type === 'single' && (
+                  <circle
+                    cx={pt.x}
+                    cy={pt.y}
+                    r="14"
+                    fill="#FF6E40"
+                    fillOpacity="0.18"
+                    className="animate-pulse pointer-events-none"
+                  />
+                )}
+
+                <circle
+                  cx={pt.x}
+                  cy={pt.y}
+                  r={isHovered ? '6' : isLowest ? '5' : '4'}
+                  fill={isLowest ? '#10B981' : '#FF6E40'}
+                  stroke="#ffffff"
+                  strokeWidth={isHovered ? '2.5' : '2'}
+                  className="transition-all duration-150 pointer-events-none drop-shadow-xs"
+                />
+              </g>
+            );
+          })}
+
+          {/* Dedicated X-Axis Timeline Labels from genuine observations */}
+          <g className="fill-neutral-400 dark:fill-neutral-500 text-[10px] font-sans select-none">
+            {chartData.type === 'multi' && (
+              <>
+                <text x={paddingX} y={svgHeight - 10} textAnchor="start">
+                  {formatDate(chartData.minTime)}
+                </text>
+                {chartData.minTime !== chartData.maxTime && (
+                  <text x={svgWidth / 2} y={svgHeight - 10} textAnchor="middle">
+                    {formatDate((chartData.minTime + chartData.maxTime) / 2)}
+                  </text>
+                )}
+                <text x={svgWidth - paddingX} y={svgHeight - 10} textAnchor="end">
+                  {formatDate(chartData.maxTime)} (Today)
+                </text>
+              </>
+            )}
+
+            {chartData.type === 'single' && (
+              <text x={svgWidth / 2} y={svgHeight - 10} textAnchor="middle">
+                Recorded: {formatDate(chartData.minTime)} (Today's Active Listing)
+              </text>
+            )}
+
+            {chartData.type === 'empty' && (
+              <text x={svgWidth / 2} y={svgHeight - 10} textAnchor="middle">
+                Real-Time Tracking Timeline Active
+              </text>
+            )}
+          </g>
+        </svg>
+
+        {/* Empty state overlay when zero historical observations exist */}
+        {chartData.type === 'empty' && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center pointer-events-none bg-white/70 dark:bg-neutral-900/70 backdrop-blur-2xs">
+            <div className="w-9 h-9 rounded-full bg-neutral-100 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 flex items-center justify-center text-neutral-500 mb-1.5 shadow-2xs">
+              <Info className="w-4 h-4" />
+            </div>
+            <h4 className="text-xs sm:text-sm font-semibold text-neutral-800 dark:text-neutral-200">
+              Historical price data unavailable
+            </h4>
+            <p className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-0.5 max-w-sm">
+              {intelligence?.uncertaintyNote ||
+                'No verified historical price observations could be confirmed for this specific product listing. Real-time price tracking is active at the current listed price.'}
+            </p>
+          </div>
+        )}
+
+        {/* Floating Tooltip when hovering over a snapshot dot */}
+        {hoveredPoint && (
+          <div
+            className="absolute z-20 pointer-events-none bg-neutral-900/95 dark:bg-white/95 text-white dark:text-neutral-900 px-3 py-2 rounded-lg shadow-xl text-xs backdrop-blur-xs border border-neutral-700 dark:border-neutral-200 transition-all duration-100 max-w-xs"
+            style={{
+              left: `${Math.min(
+                Math.max(hoveredPoint.x * (100 / svgWidth) - 15, 5),
+                72
+              )}%`,
+              top: `${Math.max(10, (hoveredPoint.y / svgHeight) * 100 - 35)}%`,
+            }}
+          >
+            <div className="font-bold text-sm text-[#FF6E40]">
+              {formatPriceDisplay(hoveredPoint.snapshot.price, currency)}
+            </div>
+            <div className="text-[11px] text-neutral-300 dark:text-neutral-600 mt-0.5 flex items-center gap-1">
+              <Calendar className="w-3 h-3" />
+              {formatDateTime(hoveredPoint.snapshot.recordedAt)}
+            </div>
+            {hoveredPoint.snapshot.source && (
+              <div className="text-[10px] text-emerald-400 dark:text-emerald-600 mt-0.5 font-medium flex items-center justify-between gap-1">
+                <span>Source: {hoveredPoint.snapshot.source}</span>
+                {hoveredPoint.snapshot.sourceUrl && (
+                  <span className="text-[9px] text-[#FF6E40] underline font-sans">Verified</span>
+                )}
+              </div>
+            )}
+            {hoveredPoint.snapshot.evidence && (
+              <div className="text-[10px] text-amber-300 dark:text-amber-600 mt-0.5 italic">
+                Evidence: {hoveredPoint.snapshot.evidence}
+              </div>
+            )}
+            {hoveredPoint.snapshot.note && (
+              <div className="text-[10px] text-neutral-400 dark:text-neutral-500 italic mt-1 border-t border-neutral-700/60 dark:border-neutral-200/60 pt-1">
+                "{hoveredPoint.snapshot.note}"
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Informational Sub-Banner according to observation count */}
+      {chartData.type === 'single' && (
+        <div
+          id="single-snapshot-banner"
+          className="p-3.5 sm:p-4 bg-white dark:bg-neutral-900/60 rounded-xl border border-neutral-200/80 dark:border-neutral-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+        >
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-emerald-500 shrink-0" />
+            <div>
+              <span className="font-semibold text-neutral-800 dark:text-neutral-200">
+                1 Verified Observation Recorded
+              </span>
+              <p className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-0.5">
+                Initial listing benchmark tracked at{' '}
+                <strong className="text-neutral-900 dark:text-white">
+                  {formatPriceDisplay(effectiveSnapshots[0]?.price || stats.current, currency)}
+                </strong>
+                . A chronological trend curve will connect subsequent verified price adjustments.
+              </p>
+            </div>
+          </div>
+          <div className="inline-flex items-center gap-2 self-start sm:self-auto bg-neutral-100 dark:bg-neutral-800 px-2.5 py-1 rounded-md text-[11px] text-neutral-600 dark:text-neutral-300 font-mono">
+            <Clock className="w-3 h-3 text-[#FF6E40]" />
+            <span>Tracking active</span>
+          </div>
+        </div>
+      )}
+
+      {chartData.type === 'empty' && (
+        <div
+          id="no-history-banner"
+          className="p-3.5 sm:p-4 bg-white dark:bg-neutral-900/60 rounded-xl border border-neutral-200/80 dark:border-neutral-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+        >
+          <div className="flex items-center gap-2">
+            <Tag className="w-4 h-4 text-[#FF6E40] shrink-0" />
+            <div>
+              <span className="font-semibold text-neutral-800 dark:text-neutral-200">
+                Current Listed Price: {formatPriceDisplay(stats.current, currency)}
+              </span>
+              <p className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-0.5">
+                Real-time price tracking is active. Historical observations will be added as price adjustments occur.
+              </p>
+            </div>
+          </div>
+          <div className="inline-flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-medium text-[11px]">
+            <CheckCircle2 className="w-3.5 h-3.5" />
+            <span>Verified Current Listing</span>
+          </div>
         </div>
       )}
 
@@ -893,6 +1042,11 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
                           </span>
                         )}
                       </div>
+                      {item.evidence && (
+                        <div className="text-[10px] text-neutral-500 dark:text-neutral-400 mt-1 italic pl-1 border-l-2 border-emerald-500/50">
+                          Evidence: {item.evidence}
+                        </div>
+                      )}
                     </div>
                   </div>
 

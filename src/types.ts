@@ -174,6 +174,23 @@ export interface Product {
   monthlyClicks?: Record<string, number>;
   priceHistory?: PriceHistoryPoint[];
   priceIntelligence?: PriceIntelligenceData;
+  lastResearchedAt?: string;
+  lastResearchedMonth?: string;
+  researchStatus?: 'researched' | 'pending' | 'quota_paused' | 'from_prior_month';
+}
+
+export interface BatchResearchStatus {
+  currentMonth: string;
+  status: 'idle' | 'researching' | 'quota_paused' | 'completed';
+  totalProducts: number;
+  researchedCount: number;
+  pendingCount: number;
+  researchedProductIds: string[];
+  quotaPausedAt?: string | null;
+  resumesAt?: string | null;
+  lastRunAt?: string | null;
+  currentProductTitle?: string | null;
+  message?: string;
 }
 
 export interface ClickRecord {

@@ -57,7 +57,7 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
   const [snapshots, setSnapshots] = useState<PriceSnapshot[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
-  const [isResearching, setIsResearching] = useState<boolean>(true);
+  const [isResearching, setIsResearching] = useState<boolean>(false);
   const [timeRange, setTimeRange] = useState<'30d' | '90d' | 'all'>('all');
   const [intelligence, setIntelligence] = useState<PriceIntelligenceData | null>(() => {
     const cached = getCachedPriceIntelligence(productId);
@@ -70,45 +70,34 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
     snapshot: PriceSnapshot;
   } | null>(null);
 
-  // Background fetch trigger (used on mount and for manual refresh)
+  // Manual research trigger (available for admins or explicit re-research)
   const runBackgroundPriceFetch = useCallback(async () => {
     if (!productId) return;
     setRefreshing(true);
     setIsResearching(true);
-    const prodPayload = {
-      id: productId,
-      title: product?.title || '',
-      brand: product?.brand,
-      modelIdentifier: product?.modelIdentifier,
-      affiliateUrl: product?.affiliateUrl,
-      productUrl: product?.productUrl,
-      store: product?.store,
-      price: product?.price,
-      currentPrice: currentPrice || product?.currentPrice,
-      mrp: product?.mrp || product?.originalPrice,
-      originalPrice: product?.originalPrice,
-      category: product?.category,
-      description: product?.description,
-    };
 
     try {
-      const result = await fetchBackgroundPriceHistory(prodPayload);
-      if (result) {
-        setIntelligence(result);
+      const response = await fetch('/api/price-history/research-product', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ productId }),
+      });
+      const json = await response.json();
+      if (json && json.success && json.data) {
+        setIntelligence(json.data);
       }
     } catch (err) {
-      console.warn('Background price fetch notice:', err);
+      console.warn('Manual price research notice:', err);
     } finally {
       setRefreshing(false);
       setIsResearching(false);
     }
-  }, [productId, product, currentPrice]);
+  }, [productId]);
 
-  // Real-time listener for price history snapshots of this product
+  // Real-time listener for price history snapshots of this product from Firestore
   useEffect(() => {
     let isMounted = true;
     setLoading(true);
-    setIsResearching(true);
 
     const unsubscribe = db.subscribeToPriceHistory(productId, (data) => {
       if (isMounted) {
@@ -116,39 +105,6 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
         setLoading(false);
       }
     });
-
-    // Run background fetch once when productId mounts
-    const prodPayload = {
-      id: productId,
-      title: product?.title || '',
-      brand: product?.brand,
-      modelIdentifier: product?.modelIdentifier,
-      affiliateUrl: product?.affiliateUrl,
-      productUrl: product?.productUrl,
-      store: product?.store,
-      price: product?.price,
-      currentPrice: currentPrice || product?.currentPrice,
-      mrp: product?.mrp || product?.originalPrice,
-      originalPrice: product?.originalPrice,
-      category: product?.category,
-      description: product?.description,
-    };
-
-    fetchBackgroundPriceHistory(prodPayload)
-      .then((result) => {
-        if (isMounted) {
-          if (result) {
-            setIntelligence(result);
-          }
-          setIsResearching(false);
-        }
-      })
-      .catch((err) => {
-        console.warn('Background price history prefetch notice:', err);
-        if (isMounted) {
-          setIsResearching(false);
-        }
-      });
 
     // Listen to local optimistic snapshot events
     const handleSnapshotAdded = (e: Event) => {

@@ -1,0 +1,15 @@
+{
+  "currentMonth": "2026-10",
+  "status": "quota_paused",
+  "totalProducts": 23,
+  "researchedCount": 1,
+  "pendingCount": 22,
+  "researchedProductIds": [
+    "prod_1789196748190_ji01p"
+  ],
+  "quotaPausedAt": "2026-10-08T18:25:51.769Z",
+  "resumesAt": "2026-10-09T00:05:00.000Z",
+  "lastRunAt": "2026-10-08T18:25:51.471Z",
+  "currentProductTitle": null,
+  "message": "Google Search quota reached for today on Day 1. Paused gracefully. Researched 1 of 23 products today. Remaining 22 products will be researched tomorrow on Day 2. Prior month history is preserved in Firestore."
+}

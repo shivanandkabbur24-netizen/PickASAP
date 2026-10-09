@@ -1,17 +1,42 @@
 import dotenv from 'dotenv';
 dotenv.config({ override: true });
 import express from 'express';
+import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import Razorpay from 'razorpay';
 import { GoogleGenAI } from '@google/genai';
 import { createServer as createViteServer } from 'vite';
+import { initializeApp as initFirebaseApp, getApps } from 'firebase/app';
+import {
+  initializeFirestore as initServerFirestore,
+  collection as serverCollection,
+  getDocs as serverGetDocs,
+  doc as serverDoc,
+  setDoc as serverSetDoc,
+  updateDoc as serverUpdateDoc,
+} from 'firebase/firestore';
 
 const app = express();
 const PORT = 3000;
 
 app.use(express.json({ limit: '10mb' }));
+
+// Initialize server-side Firestore connection for background batch research
+let serverDb: any = null;
+try {
+  const firebaseConfigRaw = fs.readFileSync(path.resolve('./firebase-applet-config.json'), 'utf8');
+  const firebaseConfig = JSON.parse(firebaseConfigRaw);
+  const existingApps = getApps();
+  const serverFirebaseApp = existingApps.length > 0 
+    ? existingApps[0] 
+    : initFirebaseApp(firebaseConfig, 'server-pickasap');
+  serverDb = initServerFirestore(serverFirebaseApp, {}, firebaseConfig.firestoreDatabaseId);
+  console.log('[BatchEngine] Firestore connected for server batch research.');
+} catch (err: any) {
+  console.warn('[BatchEngine] Firestore initialization notice:', err?.message || err);
+}
 
 // Lazy initialization of Gemini GenAI client
 let geminiClient: GoogleGenAI | null = null;
@@ -343,16 +368,37 @@ REQUIRED JSON RESPONSE FORMAT:
     }
   }
 
-  // If Google Search grounding failed or quota was exceeded, ZERO HALLUCINATION rule applies:
-  // Return isHistoricalDataAvailable: false, zero points, and explicit audit explanation.
+  // If Google Search grounding hit quota limit (429 / RESOURCE_EXHAUSTED):
+  if (quotaExceededError) {
+    const quotaAudit = {
+      productId,
+      productName: title,
+      currentPrice: currentPriceNum,
+      isHistoricalDataAvailable: false,
+      quotaExceeded: true,
+      uncertaintyNote: 'Google Search grounding daily quota limit reached (429). Pausing until tomorrow for remaining products.',
+      summaryNote: 'Daily Google Search quota limit reached. Paused until next daily cycle.',
+      priceHistory: [],
+      grounding: {
+        searchInvoked: true,
+        searchQueries: [],
+        sources: [],
+        groundingChunksCount: 0,
+        verifiedObservationsCount: 0,
+        status: 'search_quota_exceeded',
+        quotaNotice: 'Google Search grounding quota limit reached for today.',
+      },
+    };
+    return quotaAudit;
+  }
+
+  // If search didn't hit quota but simply found no records
   const emptyAudit = {
     productId,
     productName: title,
     currentPrice: currentPriceNum,
     isHistoricalDataAvailable: false,
-    uncertaintyNote: quotaExceededError
-      ? 'Google Search grounding API quota limit was reached (429 RESOURCE_EXHAUSTED). To ensure zero hallucinations, unverified historical prices are strictly withheld.'
-      : 'Google Search did not retrieve verifiable historical price evidence for this specific product.',
+    uncertaintyNote: 'Google Search did not retrieve verifiable historical price evidence for this specific product.',
     summaryNote: 'Historical price tracking is active. Historical records require verified Google Search grounding evidence.',
     priceHistory: [],
     grounding: {
@@ -361,13 +407,10 @@ REQUIRED JSON RESPONSE FORMAT:
       sources: [],
       groundingChunksCount: 0,
       verifiedObservationsCount: 0,
-      status: quotaExceededError ? 'search_quota_exceeded' : 'no_historical_evidence_found',
-      quotaNotice: quotaExceededError
-        ? 'Grounding with Google Search requires billing quota on Google AI Studio / Cloud project ($35/1k requests).'
-        : null,
+      status: 'no_historical_evidence_found',
+      quotaNotice: null,
     },
   };
-
   priceHistoryCacheByProductId.set(productId, emptyAudit);
   return emptyAudit;
 }
@@ -574,6 +617,451 @@ app.post('/api/price-history/fetch', async (req, res) => {
     source: 'product_baseline',
     data: fallbackData,
   });
+});
+
+// -------------------------------------------------------------
+// MONTHLY BATCH PRICE INTELLIGENCE RESEARCH ENGINE (QUOTA-AWARE)
+// -------------------------------------------------------------
+
+const STATE_DIR = path.resolve('./system_state');
+if (!fs.existsSync(STATE_DIR)) {
+  fs.mkdirSync(STATE_DIR, { recursive: true });
+}
+const BATCH_STATE_FILE = path.join(STATE_DIR, 'batch_price_research_state.json');
+
+interface PriceBatchResearchState {
+  currentMonth: string;
+  status: 'idle' | 'researching' | 'quota_paused' | 'completed';
+  totalProducts: number;
+  researchedCount: number;
+  pendingCount: number;
+  researchedProductIds: string[];
+  quotaPausedAt?: string | null;
+  resumesAt?: string | null;
+  lastRunAt?: string | null;
+  currentProductTitle?: string | null;
+  message?: string;
+}
+
+function loadBatchState(): PriceBatchResearchState {
+  const currentMonth = new Date().toISOString().slice(0, 7);
+  try {
+    if (fs.existsSync(BATCH_STATE_FILE)) {
+      const raw = fs.readFileSync(BATCH_STATE_FILE, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        if (parsed.currentMonth !== currentMonth) {
+          const freshState: PriceBatchResearchState = {
+            currentMonth,
+            status: 'idle',
+            totalProducts: parsed.totalProducts || 0,
+            researchedCount: 0,
+            pendingCount: parsed.totalProducts || 0,
+            researchedProductIds: [],
+            quotaPausedAt: null,
+            resumesAt: null,
+            lastRunAt: null,
+            currentProductTitle: null,
+            message: `New monthly cycle initialized for ${currentMonth}. Ready for scheduled batch research.`,
+          };
+          saveBatchState(freshState);
+          return freshState;
+        }
+        return parsed;
+      }
+    }
+  } catch (err) {
+    console.warn('[BatchEngine] Notice loading batch state, resetting:', err);
+  }
+
+  const defaultState: PriceBatchResearchState = {
+    currentMonth,
+    status: 'idle',
+    totalProducts: 0,
+    researchedCount: 0,
+    pendingCount: 0,
+    researchedProductIds: [],
+    quotaPausedAt: null,
+    resumesAt: null,
+    lastRunAt: null,
+    currentProductTitle: null,
+    message: `Ready for ${currentMonth} monthly batch research.`,
+  };
+  saveBatchState(defaultState);
+  return defaultState;
+}
+
+function saveBatchState(state: PriceBatchResearchState): void {
+  try {
+    fs.writeFileSync(BATCH_STATE_FILE, JSON.stringify(state, null, 2), 'utf8');
+  } catch (err) {
+    console.warn('[BatchEngine] Notice saving batch state:', err);
+  }
+}
+
+function getTomorrowUtcDate(): string {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() + 1);
+  d.setUTCHours(0, 5, 0, 0); // 00:05 UTC next day
+  return d.toISOString();
+}
+
+async function getBatchStateWithLiveCounts(): Promise<PriceBatchResearchState> {
+  const state = loadBatchState();
+  const currentMonth = new Date().toISOString().slice(0, 7);
+  if (state.currentMonth !== currentMonth) {
+    state.currentMonth = currentMonth;
+    state.researchedProductIds = [];
+    state.status = 'idle';
+    state.quotaPausedAt = null;
+    state.resumesAt = null;
+  }
+
+  if (serverDb) {
+    try {
+      const snap = await serverGetDocs(serverCollection(serverDb, 'products'));
+      const prods: any[] = [];
+      snap.forEach((d) => prods.push({ id: d.id, ...d.data() }));
+      state.totalProducts = prods.length;
+      const researchedInFirestore = prods
+        .filter((p) => p.lastResearchedMonth === currentMonth)
+        .map((p) => p.id);
+      const uniqueResearched = Array.from(new Set([...state.researchedProductIds, ...researchedInFirestore]));
+      state.researchedProductIds = uniqueResearched;
+      state.researchedCount = uniqueResearched.length;
+      state.pendingCount = Math.max(0, state.totalProducts - state.researchedCount);
+      if (state.pendingCount === 0 && state.totalProducts > 0 && state.status !== 'researching') {
+        state.status = 'completed';
+        state.message = `All ${state.totalProducts} products have been researched and updated in Firestore for ${currentMonth}.`;
+      }
+      saveBatchState(state);
+    } catch {}
+  }
+  return state;
+}
+
+async function runBatchPriceResearch(options: { forceResume?: boolean } = {}): Promise<{
+  success: boolean;
+  message: string;
+  state: PriceBatchResearchState;
+}> {
+  let state = await getBatchStateWithLiveCounts();
+  const currentMonth = new Date().toISOString().slice(0, 7);
+
+  if (state.status === 'researching') {
+    return { success: false, message: 'Batch research is already actively running in the background.', state };
+  }
+
+  const now = new Date();
+  if (state.status === 'quota_paused' && !options.forceResume) {
+    if (state.resumesAt && now < new Date(state.resumesAt)) {
+      return {
+        success: true,
+        message: `Quota paused for today on Day 1. Automatic resume scheduled for Day 2 (${state.resumesAt}).`,
+        state,
+      };
+    } else {
+      // Day 2 has arrived!
+      state.status = 'idle';
+      state.quotaPausedAt = null;
+      state.resumesAt = null;
+      saveBatchState(state);
+    }
+  }
+
+  // Retrieve products
+  let allProducts: any[] = [];
+  if (serverDb) {
+    try {
+      const snap = await serverGetDocs(serverCollection(serverDb, 'products'));
+      snap.forEach((d) => allProducts.push({ id: d.id, ...d.data() }));
+    } catch (err) {
+      console.warn('[BatchEngine] Firestore read error:', err);
+    }
+  }
+
+  if (allProducts.length === 0) {
+    try {
+      const rawInitial = fs.readFileSync(path.resolve('./src/data/initialProducts.json'), 'utf8');
+      allProducts = JSON.parse(rawInitial);
+    } catch {}
+  }
+
+  state.totalProducts = allProducts.length;
+  const pendingProducts = allProducts.filter(
+    (p) => p.lastResearchedMonth !== currentMonth && !state.researchedProductIds.includes(p.id)
+  );
+
+  state.pendingCount = pendingProducts.length;
+  state.researchedCount = state.totalProducts - state.pendingCount;
+
+  if (pendingProducts.length === 0) {
+    state.status = 'completed';
+    state.message = `All ${state.totalProducts} products are already up to date for ${currentMonth}.`;
+    saveBatchState(state);
+    return { success: true, message: state.message, state };
+  }
+
+  state.status = 'researching';
+  state.message = `Monthly batch research running for ${pendingProducts.length} pending products (${currentMonth})...`;
+  state.lastRunAt = new Date().toISOString();
+  saveBatchState(state);
+
+  // Run asynchronous processing loop in background
+  (async () => {
+    console.log(`[BatchEngine] Starting research loop for ${pendingProducts.length} pending products in ${currentMonth}...`);
+    for (let i = 0; i < pendingProducts.length; i++) {
+      const prod = pendingProducts[i];
+      state.currentProductTitle = prod.title;
+      state.message = `Researching product ${i + 1}/${pendingProducts.length}: "${prod.title}"`;
+      saveBatchState(state);
+
+      const parsedPrice =
+        typeof prod.currentPrice === 'number' && prod.currentPrice > 0
+          ? prod.currentPrice
+          : parsePrice(prod.price) || 0;
+
+      let result: any = null;
+      try {
+        result = await fetchPriceIntelligenceFromGemini({
+          productId: prod.id,
+          title: prod.title,
+          brand: prod.brand,
+          modelIdentifier: prod.modelIdentifier,
+          asin: prod.asin,
+          store: prod.store,
+          resolvedUrl: prod.affiliateUrl || prod.productUrl,
+          effectiveUrl: prod.affiliateUrl || prod.productUrl,
+          currentPriceNum: parsedPrice,
+          category: prod.category,
+          description: prod.description,
+        });
+      } catch (err: any) {
+        console.warn(`[BatchEngine] Error researching product ${prod.id}:`, err?.message || err);
+      }
+
+      // Check if Quota Exceeded (429 / RESOURCE_EXHAUSTED)
+      if (result?.quotaExceeded || result?.grounding?.status === 'search_quota_exceeded') {
+        state.status = 'quota_paused';
+        state.quotaPausedAt = new Date().toISOString();
+        state.resumesAt = getTomorrowUtcDate();
+        state.currentProductTitle = null;
+        state.message = `Google Search quota reached for today on Day 1. Paused gracefully. Researched ${state.researchedCount} of ${state.totalProducts} products today. Remaining ${state.pendingCount} products will be researched tomorrow on Day 2. Prior month history is preserved in Firestore.`;
+        saveBatchState(state);
+        console.info(`[BatchEngine] QUOTA PAUSE: ${state.message}`);
+        break; // Stop loop for today!
+      }
+
+      // Save snapshots and update Firestore
+      if (result && result.isHistoricalDataAvailable && Array.isArray(result.priceHistory) && result.priceHistory.length > 0) {
+        const points = result.priceHistory;
+        if (serverDb) {
+          try {
+            for (let pIdx = 0; pIdx < points.length; pIdx++) {
+              const p = points[pIdx];
+              const snapId = `snap_hist_${prod.id}_${pIdx}_${new Date(p.date).getTime()}`;
+              const snapDoc = serverDoc(serverDb, `products/${prod.id}/priceHistory`, snapId);
+              await serverSetDoc(snapDoc, {
+                id: snapId,
+                productId: prod.id,
+                price: p.price,
+                recordedAt: new Date(p.date).toISOString(),
+                source: p.source || 'background_intelligence',
+                sourceUrl: p.sourceUrl || '',
+                evidence: p.evidence || '',
+                note: p.note || 'Recorded verified historical observation',
+              });
+            }
+            const prodRef = serverDoc(serverDb, 'products', prod.id);
+            await serverUpdateDoc(prodRef, {
+              lastResearchedAt: new Date().toISOString(),
+              lastResearchedMonth: currentMonth,
+              researchStatus: 'researched',
+            });
+            console.log(`[BatchEngine] Saved verified snapshots to Firestore for "${prod.title}"`);
+          } catch (writeErr: any) {
+            console.warn(`[BatchEngine] Firestore write notice for ${prod.id}:`, writeErr?.message || writeErr);
+          }
+        }
+      } else {
+        // Researched with search; no additional milestones found; mark as researched this month
+        if (serverDb) {
+          try {
+            const prodRef = serverDoc(serverDb, 'products', prod.id);
+            await serverUpdateDoc(prodRef, {
+              lastResearchedAt: new Date().toISOString(),
+              lastResearchedMonth: currentMonth,
+              researchStatus: 'researched',
+            });
+          } catch {}
+        }
+      }
+
+      if (!state.researchedProductIds.includes(prod.id)) {
+        state.researchedProductIds.push(prod.id);
+      }
+      state.researchedCount = state.researchedProductIds.length;
+      state.pendingCount = Math.max(0, state.totalProducts - state.researchedCount);
+      saveBatchState(state);
+
+      // Polite delay between search requests (4.5s) to avoid bursts
+      await new Promise((r) => setTimeout(r, 4500));
+    }
+
+    if (state.status !== 'quota_paused') {
+      state.status = 'completed';
+      state.currentProductTitle = null;
+      state.message = `All ${state.totalProducts} products have been researched and updated in Firestore for ${currentMonth}.`;
+      saveBatchState(state);
+      console.log(`[BatchEngine] Completed batch research for ${currentMonth}.`);
+    }
+  })().catch((err) => {
+    console.error('[BatchEngine] Background worker error:', err);
+    state.status = 'idle';
+    saveBatchState(state);
+  });
+
+  return { success: true, message: state.message, state };
+}
+
+async function researchSingleProduct(productId: string): Promise<{ success: boolean; data?: any; error?: string }> {
+  let prod: any = null;
+  if (serverDb) {
+    try {
+      const snap = await serverGetDocs(serverCollection(serverDb, 'products'));
+      snap.forEach((d) => {
+        if (d.id === productId) prod = { id: d.id, ...d.data() };
+      });
+    } catch {}
+  }
+  if (!prod) {
+    try {
+      const rawInitial = fs.readFileSync(path.resolve('./src/data/initialProducts.json'), 'utf8');
+      const all = JSON.parse(rawInitial);
+      prod = all.find((p: any) => p.id === productId);
+    } catch {}
+  }
+
+  if (!prod) {
+    return { success: false, error: 'Product not found' };
+  }
+
+  const currentMonth = new Date().toISOString().slice(0, 7);
+  const parsedPrice =
+    typeof prod.currentPrice === 'number' && prod.currentPrice > 0
+      ? prod.currentPrice
+      : parsePrice(prod.price) || 0;
+
+  const result = await fetchPriceIntelligenceFromGemini({
+    productId: prod.id,
+    title: prod.title,
+    brand: prod.brand,
+    modelIdentifier: prod.modelIdentifier,
+    asin: prod.asin,
+    store: prod.store,
+    resolvedUrl: prod.affiliateUrl || prod.productUrl,
+    effectiveUrl: prod.affiliateUrl || prod.productUrl,
+    currentPriceNum: parsedPrice,
+    category: prod.category,
+    description: prod.description,
+  });
+
+  if (result && result.isHistoricalDataAvailable && Array.isArray(result.priceHistory)) {
+    const points = result.priceHistory;
+    if (serverDb) {
+      try {
+        for (let pIdx = 0; pIdx < points.length; pIdx++) {
+          const p = points[pIdx];
+          const snapId = `snap_hist_${prod.id}_${pIdx}_${new Date(p.date).getTime()}`;
+          const snapDoc = serverDoc(serverDb, `products/${prod.id}/priceHistory`, snapId);
+          await serverSetDoc(snapDoc, {
+            id: snapId,
+            productId: prod.id,
+            price: p.price,
+            recordedAt: new Date(p.date).toISOString(),
+            source: p.source || 'background_intelligence',
+            sourceUrl: p.sourceUrl || '',
+            evidence: p.evidence || '',
+            note: p.note || 'Recorded verified historical observation',
+          });
+        }
+        const prodRef = serverDoc(serverDb, 'products', prod.id);
+        await serverUpdateDoc(prodRef, {
+          lastResearchedAt: new Date().toISOString(),
+          lastResearchedMonth: currentMonth,
+          researchStatus: 'researched',
+        });
+      } catch (err: any) {
+        console.warn('[BatchEngine] Firestore single research notice:', err);
+      }
+    }
+  }
+
+  const state = loadBatchState();
+  if (!state.researchedProductIds.includes(productId)) {
+    state.researchedProductIds.push(productId);
+    state.researchedCount = state.researchedProductIds.length;
+    state.pendingCount = Math.max(0, state.totalProducts - state.researchedCount);
+    saveBatchState(state);
+  }
+
+  return { success: true, data: result };
+}
+
+// Background scheduler interval (checks every 30 minutes)
+setInterval(() => {
+  const state = loadBatchState();
+  const now = new Date();
+  const currentMonth = now.toISOString().slice(0, 7);
+
+  // If 1st of the month has arrived:
+  if (state.currentMonth !== currentMonth) {
+    console.log(`[BatchScheduler] New month detected (${currentMonth}). Initiating monthly price intelligence batch.`);
+    runBatchPriceResearch();
+    return;
+  }
+
+  // If paused due to daily quota and Day 2 / tomorrow has arrived:
+  if (state.status === 'quota_paused' && state.resumesAt) {
+    if (now >= new Date(state.resumesAt)) {
+      console.log(`[BatchScheduler] New day has arrived! Automatically resuming batch research for remaining products.`);
+      runBatchPriceResearch();
+    }
+  }
+}, 30 * 60 * 1000);
+
+// Startup check (runs 6 seconds after server starts)
+setTimeout(() => {
+  const state = loadBatchState();
+  const currentMonth = new Date().toISOString().slice(0, 7);
+  if (state.currentMonth !== currentMonth) {
+    console.log(`[BatchScheduler] Server startup: initializing monthly research for ${currentMonth}.`);
+    runBatchPriceResearch();
+  } else if (state.status === 'quota_paused' && state.resumesAt && new Date() >= new Date(state.resumesAt)) {
+    console.log(`[BatchScheduler] Server startup: resuming paused batch research.`);
+    runBatchPriceResearch();
+  }
+}, 6000);
+
+// Endpoints for Batch Research Management
+app.get('/api/price-history/batch-status', async (req, res) => {
+  const state = await getBatchStateWithLiveCounts();
+  return res.json({ success: true, data: state });
+});
+
+app.post('/api/price-history/run-batch', async (req, res) => {
+  const { forceResume } = req.body || {};
+  const result = await runBatchPriceResearch({ forceResume: Boolean(forceResume) });
+  return res.json(result);
+});
+
+app.post('/api/price-history/research-product', async (req, res) => {
+  const { productId } = req.body || {};
+  if (!productId) {
+    return res.status(400).json({ error: 'productId is required' });
+  }
+  const result = await researchSingleProduct(productId);
+  return res.json(result);
 });
 
 // -------------------------------------------------------------

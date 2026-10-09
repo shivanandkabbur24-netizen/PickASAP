@@ -63,7 +63,10 @@ service cloud.firestore {
              (!('dealStatus' in data) || (data.dealStatus is string && data.dealStatus.size() <= 50)) &&
              (!('lastUpdated' in data) || (data.lastUpdated is string && data.lastUpdated.size() <= 100)) &&
              (!('marketplace' in data) || (data.marketplace is string && data.marketplace.size() <= 100)) &&
-             (!('productUrl' in data) || (data.productUrl is string && data.productUrl.size() <= 3000));
+             (!('productUrl' in data) || (data.productUrl is string && data.productUrl.size() <= 3000)) &&
+             (!('lastResearchedAt' in data) || (data.lastResearchedAt is string && data.lastResearchedAt.size() <= 100)) &&
+             (!('lastResearchedMonth' in data) || (data.lastResearchedMonth is string && data.lastResearchedMonth.size() <= 30)) &&
+             (!('researchStatus' in data) || (data.researchStatus is string && data.researchStatus.size() <= 50));
     }
 
     function isValidPriceSnapshot(data) {
@@ -140,7 +143,7 @@ service cloud.firestore {
       allow update: if isValidId(productId) && (
         isAdmin() ||
         isValidProduct(incoming()) ||
-        incoming().diff(existing()).affectedKeys().hasOnly(['clicksCount', 'monthlyClicks'])
+        incoming().diff(existing()).affectedKeys().hasOnly(['clicksCount', 'monthlyClicks', 'lastResearchedAt', 'lastResearchedMonth', 'researchStatus'])
       );
 
       // Allow deleting products

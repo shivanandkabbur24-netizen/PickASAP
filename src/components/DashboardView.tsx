@@ -34,6 +34,7 @@ import { AdminPriceUpdateModal } from './AdminPriceUpdateModal';
 import { PriceSubmissionsManager } from './PriceSubmissionsManager';
 import { TrustedUsersManager } from './TrustedUsersManager';
 import { PlatformFeeModal } from './PlatformFeeModal';
+import { PriceIntelligenceBatchManager } from './PriceIntelligenceBatchManager';
 import {
   getRevenueTier,
   getCurrentMonthKey,
@@ -71,7 +72,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     user.email?.toLowerCase().trim() === 'shivanandkabbur24@gmail.com' ||
     user.email?.toLowerCase().includes('admin');
 
-  const [activeTab, setActiveTab] = useState<'catalog' | 'clicks' | 'submissions' | 'contributors'>('catalog');
+  const [activeTab, setActiveTab] = useState<'catalog' | 'clicks' | 'submissions' | 'contributors' | 'price-intelligence'>('catalog');
   const [selectedMonthKey, setSelectedMonthKey] = useState<string>(() => getCurrentMonthKey());
   const [currentUserState, setCurrentUserState] = useState<UserProfile>(user);
   const [isPlatformFeeModalOpen, setIsPlatformFeeModalOpen] = useState(false);
@@ -93,7 +94,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   // If a non-owner user attempts to switch to restricted tabs, force back to catalog
   useEffect(() => {
-    if (!isOwnerAdmin && (activeTab === 'submissions' || activeTab === 'contributors')) {
+    if (!isOwnerAdmin && (activeTab === 'submissions' || activeTab === 'contributors' || activeTab === 'price-intelligence')) {
       setActiveTab('catalog');
     }
   }, [isOwnerAdmin, activeTab]);
@@ -411,6 +412,22 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 Trusted
               </span>
             )}
+          </button>
+        )}
+
+        {/* Monthly Price Intelligence: Visible to Owner Admin */}
+        {isOwnerAdmin && (
+          <button
+            id="dashboard-tab-price-intelligence"
+            onClick={() => setActiveTab('price-intelligence')}
+            className={`pb-3 px-4 text-xs sm:text-sm font-semibold flex items-center gap-2 border-b-2 transition-colors whitespace-nowrap cursor-pointer ${
+              activeTab === 'price-intelligence'
+                ? 'border-[#FF6E40] text-[#FF6E40]'
+                : 'border-transparent text-neutral-500 hover:text-neutral-900 dark:hover:text-white'
+            }`}
+          >
+            <RotateCcw className="w-4 h-4" />
+            <span>Price Intelligence &amp; Quota</span>
           </button>
         )}
       </div>
@@ -1091,6 +1108,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       {/* Tab 3: Trusted Contributors & User Trust Management (Only visible to shivanandkabbur24@gmail.com) */}
       {isOwnerAdmin && activeTab === 'contributors' && (
         <TrustedUsersManager currentUser={user} />
+      )}
+
+      {/* Tab 4: Monthly Price Intelligence & Batch Search Manager (Only visible to Owner Admin) */}
+      {isOwnerAdmin && activeTab === 'price-intelligence' && (
+        <PriceIntelligenceBatchManager
+          products={products}
+          onProductUpdated={onProductUpdated}
+          onSelectProduct={onSelectProduct}
+        />
       )}
 
       {/* In-App Delete Confirmation Modal (Bypasses iframe alert/confirm restrictions) */}

@@ -351,15 +351,10 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       // 1. Immediately notify parent component for 0ms UI update
       onProductCreated(newProduct);
 
-      // 2. Persist to storage & cloud
+      // 2. Persist to storage & cloud (initial price snapshot is stored in Firestore)
       await db.addProduct(newProduct);
 
-      // 3. Kick off automatic background price intelligence fetch for this product
-      fetchBackgroundPriceHistory(newProduct).catch((fetchErr) => {
-        console.warn('Background price history prefetch notice:', fetchErr);
-      });
-
-      // 4. Immediately close modal
+      // 3. Immediately close modal
       onClose();
 
       // Reset fields

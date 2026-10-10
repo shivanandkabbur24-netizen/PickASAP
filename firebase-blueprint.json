@@ -151,6 +151,11 @@
           "type": "string",
           "description": "Unique identifier for the snapshot"
         },
+        "productId": {
+          "type": "string",
+          "description": "Product ID associated with this price snapshot",
+          "maxLength": 128
+        },
         "price": {
           "type": "number",
           "description": "Observed and verified product price"
@@ -161,13 +166,36 @@
         },
         "source": {
           "type": "string",
-          "description": "Source of observation (e.g. initial, community_update, admin_verified)",
-          "maxLength": 100
+          "description": "Source of observation (e.g. initial, community_update, admin_verified, background_intelligence)",
+          "maxLength": 250
+        },
+        "sourceUrl": {
+          "type": "string",
+          "description": "Source URL or e-commerce listing",
+          "maxLength": 3000
+        },
+        "evidence": {
+          "type": "string",
+          "description": "Verifiable quote or snippet from source",
+          "maxLength": 2000
         },
         "note": {
           "type": "string",
           "description": "Optional commentary or context on deal/price event",
-          "maxLength": 500
+          "maxLength": 1000
+        },
+        "dropPercentage": {
+          "type": "string",
+          "description": "Price drop percentage string",
+          "maxLength": 100
+        },
+        "isLowest": {
+          "type": "boolean",
+          "description": "Whether this point represents all-time lowest price"
+        },
+        "isHighest": {
+          "type": "boolean",
+          "description": "Whether this point represents all-time highest price"
         },
         "submittedBy": {
           "type": "string",

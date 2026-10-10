@@ -170,15 +170,7 @@ export function getCachedPriceIntelligence(productId: string): PriceIntelligence
           return null;
         }
 
-        // If dataset has historical points but doesn't reach today's date, invalidate to fetch up to date
-        const todayStr = new Date().toISOString().split('T')[0];
-        if (points.length > 0) {
-          const lastPoint = points[points.length - 1];
-          if (lastPoint && lastPoint.date !== todayStr) {
-            localStorage.removeItem(`${CACHE_PREFIX}${productId}`);
-            return null;
-          }
-        }
+        // Preserve authentic historical points from prior research cycles
         return parsed;
       }
     }
@@ -232,19 +224,24 @@ export async function fetchBackgroundPriceHistory(product: {
 
     // ONLY sync if multiple verified historical points exist with sources
     if (intel.isHistoricalDataAvailable && points.length > 1) {
-      const newSnapshots: PriceSnapshot[] = points.map((p, idx) => ({
-        id: `snap_hist_${product.id}_${idx}_${new Date(p.date).getTime()}`,
-        productId: product.id,
-        price: p.price,
-        recordedAt: new Date(p.date).toISOString(),
-        source: p.source || 'background_intelligence',
-        sourceUrl: p.sourceUrl,
-        evidence: p.evidence,
-        note: p.note || 'Recorded verified price',
-        dropPercentage: p.dropPercentage,
-        isLowest: p.isLowest,
-        isHighest: p.isHighest,
-      }));
+      const newSnapshots: PriceSnapshot[] = points.map((p, idx) => {
+        const dateObj = new Date(p.date);
+        const timeStamp = isNaN(dateObj.getTime()) ? idx * 86400000 : dateObj.getTime();
+        const isoRecorded = isNaN(dateObj.getTime()) ? new Date().toISOString() : dateObj.toISOString();
+        return {
+          id: `snap_hist_${product.id}_${idx}_${timeStamp}`,
+          productId: product.id,
+          price: typeof p.price === 'number' ? p.price : Number(p.price) || 0,
+          recordedAt: isoRecorded,
+          source: String(p.source || 'background_intelligence').slice(0, 200),
+          sourceUrl: p.sourceUrl ? String(p.sourceUrl).slice(0, 2500) : undefined,
+          evidence: p.evidence ? String(p.evidence).slice(0, 1500) : undefined,
+          note: p.note ? String(p.note).slice(0, 800) : 'Recorded verified price',
+          dropPercentage: p.dropPercentage,
+          isLowest: p.isLowest,
+          isHighest: p.isHighest,
+        };
+      });
 
       newSnapshots.sort((a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime());
       setStoredPriceHistory(product.id, newSnapshots);
@@ -314,11 +311,19 @@ export async function fetchBackgroundPriceHistory(product: {
     // Gracefully handle network timeouts or offline mode
   }
 
-  // 4. If API returned data, use it; otherwise fallback to cached or independent baseline
-  const intelData: PriceIntelligenceData =
-    fetchedData ||
-    cachedIntel ||
-    generateClientPriceHistory(product);
+  // 4. If API returned data with historical points, use it; otherwise fallback to cached or independent baseline
+  const hasValidFetched = Boolean(
+    fetchedData && fetchedData.isHistoricalDataAvailable && Array.isArray(fetchedData.priceHistory) && fetchedData.priceHistory.length > 0
+  );
+  const hasValidCached = Boolean(
+    cachedIntel && cachedIntel.isHistoricalDataAvailable && Array.isArray(cachedIntel.priceHistory) && cachedIntel.priceHistory.length > 0
+  );
+
+  const intelData: PriceIntelligenceData = hasValidFetched
+    ? fetchedData!
+    : hasValidCached
+      ? cachedIntel!
+      : generateClientPriceHistory(product);
 
   // Cache the intelligence strictly under this product ID
   saveCachedPriceIntelligence(product.id, intelData);

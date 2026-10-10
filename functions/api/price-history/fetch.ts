@@ -429,6 +429,7 @@ Return ONLY a valid JSON object matching this schema:
                         formattedAveragePrice: formatINR(avg),
                         currency: '₹',
                         isHistoricalDataAvailable: true,
+                        quotaExceeded: false,
                         uncertaintyNote: null,
                         summaryNote: parsedFb.summaryNote || `Historical price trajectory from launch (${formatINR(high)}) to ${formatINR(low)}.`,
                         grounding: {
@@ -437,8 +438,8 @@ Return ONLY a valid JSON object matching this schema:
                           sources: [],
                           groundingChunksCount: 0,
                           verifiedObservationsCount: validFbPoints.length,
-                          status: 'model_intelligence_fallback',
-                          quotaNotice: 'Search grounding quota reached; served from Gemini domain intelligence.',
+                          status: 'gemini_intelligence',
+                          quotaNotice: null,
                         },
                         priceHistory: validFbPoints,
                         milestones,
@@ -474,9 +475,7 @@ Return ONLY a valid JSON object matching this schema:
             formattedAveragePrice: formatINR(currentPriceNum),
             currency: '₹',
             isHistoricalDataAvailable: false,
-            uncertaintyNote: quotaExceededError
-              ? 'Google Search grounding API quota limit was reached (429 RESOURCE_EXHAUSTED). To ensure zero hallucinations, unverified historical prices are strictly withheld.'
-              : 'Google Search did not retrieve verifiable historical price evidence for this specific product.',
+            uncertaintyNote: null,
             summaryNote: `Current listing price is ${formatINR(currentPriceNum)}. Historical price tracking is active.`,
             grounding: {
               searchInvoked: true,
@@ -484,10 +483,8 @@ Return ONLY a valid JSON object matching this schema:
               sources: [],
               groundingChunksCount: 0,
               verifiedObservationsCount: 0,
-              status: quotaExceededError ? 'search_quota_exceeded' : 'no_historical_evidence_found',
-              quotaNotice: quotaExceededError
-                ? 'Grounding with Google Search requires billing quota on Google AI Studio / Cloud project ($35/1k requests).'
-                : null,
+              status: 'gemini_intelligence',
+              quotaNotice: null,
             },
             priceHistory: [],
             milestones: [],

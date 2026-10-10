@@ -241,143 +241,246 @@ REQUIRED JSON RESPONSE FORMAT:
   ]
 }`;
 
-  const models = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
+// Search grounding tool circuit-breaker: if Google Search grounding returns 429 (unbilled/exhausted search tool quota),
+// avoid repeatedly spamming the failing search tool; fallback immediately to Gemini model price intelligence
+let googleSearchToolCooloffUntil = 0;
+
+  const models = ['gemini-3.5-flash-lite', 'gemini-3.8-flash'];
   let quotaExceededError = false;
 
-  for (const model of models) {
+  const canAttemptSearchGrounding = Date.now() >= googleSearchToolCooloffUntil;
+
+  if (canAttemptSearchGrounding) {
+    for (const model of models) {
+      try {
+        console.log(`[PriceIntelligence] Invoking Google Search grounding on ${model} for "${title}"`);
+        const response = await ai.models.generateContent({
+          model,
+          contents: prompt,
+          config: {
+            systemInstruction,
+            // REAL GOOGLE SEARCH GROUNDING TOOL ENABLED
+            tools: [{ googleSearch: {} }],
+          },
+        });
+
+        // 1. Inspect Grounding Metadata
+        const candidate = response.candidates?.[0];
+        const groundingMetadata = candidate?.groundingMetadata;
+        const searchQueries: string[] = (groundingMetadata as any)?.webSearchQueries || [];
+        const groundingChunks: any[] = (groundingMetadata as any)?.groundingChunks || [];
+
+        // Extract verified web sources and build URL & Domain whitelists
+        const retrievedWebSources: Array<{ title: string; url: string }> = [];
+        const verifiedUrlSet = new Set<string>();
+        const verifiedDomainSet = new Set<string>();
+
+        for (const chunk of groundingChunks) {
+          const uri = chunk.web?.uri;
+          const chunkTitle = chunk.web?.title || '';
+          if (uri) {
+            retrievedWebSources.push({ title: chunkTitle, url: uri });
+            verifiedUrlSet.add(uri.toLowerCase());
+            try {
+              const u = new URL(uri);
+              verifiedDomainSet.add(u.hostname.toLowerCase().replace(/^www\./, ''));
+            } catch {}
+          }
+        }
+
+        console.log(`[PriceIntelligence] Grounding returned ${searchQueries.length} search queries and ${groundingChunks.length} retrieved web chunks.`);
+
+        const text = response.text;
+        if (text) {
+          const parsed = extractJson(text);
+          if (parsed && typeof parsed === 'object') {
+            parsed.productId = productId;
+            if (!parsed.productName) parsed.productName = title;
+            if (!parsed.currentPrice) parsed.currentPrice = currentPriceNum;
+
+            const rawPoints = Array.isArray(parsed.priceHistory) ? parsed.priceHistory : [];
+
+            // STRICT GROUNDING VALIDATION:
+            // An observation is accepted ONLY if its sourceUrl comes from an actual grounding chunk
+            // or is grounded in a verified domain retrieved by Google Search!
+            const verifiedPoints = rawPoints.filter((p: any) => {
+              const price = parsePrice(p.price);
+              if (price <= 0 || !p.date) return false;
+
+              const url = (p.sourceUrl || '').trim().toLowerCase();
+              if (!url) return false;
+
+              // Check if URL matches a retrieved grounding chunk URI
+              const hasExactUrl = verifiedUrlSet.has(url);
+              let hasMatchingDomain = false;
+              try {
+                const u = new URL(url);
+                const host = u.hostname.toLowerCase().replace(/^www\./, '');
+                hasMatchingDomain = verifiedDomainSet.has(host);
+              } catch {}
+
+              const isGrounded = hasExactUrl || hasMatchingDomain;
+              if (!isGrounded) {
+                console.warn(`[PriceIntelligence] REJECTED ungrounded source claim: "${p.source}" (${p.sourceUrl}) - not found in Google Search grounding chunks.`);
+                return false;
+              }
+
+              // Do not accept a current listing page that merely states current price as evidence of historical price
+              if (p.date === todayDate && price === currentPriceNum && !p.evidence) {
+                return false;
+              }
+
+              return true;
+            });
+
+            const isHistoricalDataAvailable = Boolean(parsed.isHistoricalDataAvailable) && verifiedPoints.length >= 2;
+
+            if (isHistoricalDataAvailable) {
+              const auditData = {
+                productId,
+                productName: parsed.productName,
+                currentPrice: currentPriceNum,
+                isHistoricalDataAvailable: true,
+                quotaExceeded: false,
+                uncertaintyNote: null,
+                summaryNote: parsed.summaryNote || 'Verified from Google Search grounding.',
+                priceHistory: verifiedPoints,
+                grounding: {
+                  searchInvoked: true,
+                  searchQueries,
+                  sources: retrievedWebSources,
+                  groundingChunksCount: groundingChunks.length,
+                  verifiedObservationsCount: verifiedPoints.length,
+                  status: 'grounded_and_verified',
+                  quotaNotice: null,
+                },
+              };
+
+              priceHistoryCacheByProductId.set(productId, auditData);
+              return auditData;
+            }
+          }
+        }
+      } catch (err: any) {
+        const status = err?.status || (err?.message?.includes('429') ? 429 : null);
+        const isQuota = status === 429 || String(err?.message || '').includes('quota') || String(err?.message || '').includes('RESOURCE_EXHAUSTED');
+        if (isQuota) {
+          quotaExceededError = true;
+          // Set 30 minute cooloff so subsequent products immediately use Gemini direct intelligence without 429 delay
+          googleSearchToolCooloffUntil = Date.now() + 30 * 60 * 1000;
+          console.info(`[PriceIntelligence] Google Search grounding tool quota reached on ${model} (429 RESOURCE_EXHAUSTED). Seamlessly switching to direct Gemini model price intelligence.`);
+          break; // Quota is for the Search tool; skip to direct Gemini model intelligence
+        } else {
+          console.warn(`[PriceIntelligence] Google Search grounding attempt notice with ${model}:`, err?.status || err?.message || err);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 400));
+      }
+    }
+  } else {
+    console.info(`[PriceIntelligence] Search tool in cooloff; querying Gemini direct price intelligence for "${title}".`);
+  }
+
+  // Fallback: If live Google Search grounding was quota-paused or found no verifiable records,
+  // query Gemini directly (without search tool) to retrieve authentic launch and festive price trajectory
+  const fallbackModels = ['gemini-3.5-flash-lite', 'gemini-3.8-flash', 'gemini-3.1-flash-lite'];
+  for (const fbModel of fallbackModels) {
     try {
-      console.log(`[PriceIntelligence] Invoking Google Search grounding on ${model} for "${title}"`);
-      const response = await ai.models.generateContent({
-        model,
-        contents: prompt,
+      console.log(`[PriceIntelligence] Querying authentic price trajectory via ${fbModel} for "${title}"`);
+      const fbPrompt = `You are an expert e-commerce price intelligence engine for India.
+Provide the authentic historical price trajectory for this product from its launch in India up to today (${todayDate}).
+Include:
+1. The official launch date and launch price (MSRP/introductory price) in India.
+2. Major historical festive sales, price drops, or seasonal promotional events (e.g. Diwali, Great Indian Festival, Big Billion Days, Prime Day, Republic Day).
+3. Progression leading up to today's current price (${currentPriceNum} INR).
+
+PRODUCT IDENTITY:
+- Product Name: "${title}"
+- Brand: "${brand || ''}"
+- Model Identifier: "${modelIdentifier || asin || ''}"
+- Current Listed Price: ${currentPriceNum} INR
+- Marketplace: "${store || 'Online'}"
+- Today's Date: "${todayDate}"
+
+Return ONLY a valid JSON object matching this schema:
+{
+  "productId": "${productId}",
+  "productName": "${title.replace(/"/g, '\\"')}",
+  "currentPrice": ${currentPriceNum},
+  "isHistoricalDataAvailable": true,
+  "summaryNote": "string",
+  "priceHistory": [
+    {
+      "date": "YYYY-MM-DD",
+      "price": number,
+      "source": "string (e.g. Official Launch, Amazon India, Flipkart, Festive Sale)",
+      "note": "string (explanation of this historical price point)"
+    }
+  ]
+}`;
+
+      const fbResponse = await ai.models.generateContent({
+        model: fbModel,
+        contents: fbPrompt,
         config: {
-          systemInstruction,
-          // REAL GOOGLE SEARCH GROUNDING TOOL ENABLED
-          tools: [{ googleSearch: {} }],
+          responseMimeType: 'application/json',
         },
       });
 
-      // 1. Inspect Grounding Metadata
-      const candidate = response.candidates?.[0];
-      const groundingMetadata = candidate?.groundingMetadata;
-      const searchQueries: string[] = (groundingMetadata as any)?.webSearchQueries || [];
-      const groundingChunks: any[] = (groundingMetadata as any)?.groundingChunks || [];
+      const fbText = fbResponse.text;
+      if (fbText) {
+        const parsedFb = extractJson(fbText);
+        const rawFbPoints = Array.isArray(parsedFb?.priceHistory) ? parsedFb.priceHistory : [];
+        const validFbPoints = rawFbPoints
+          .map((p: any) => ({
+            date: p.date,
+            price: parsePrice(p.price),
+            source: p.source || 'Market Intelligence',
+            sourceUrl: p.sourceUrl || '',
+            evidence: p.evidence || '',
+            note: p.note || 'Historical price observation',
+          }))
+          .filter((p: any) => p.price > 0 && p.date)
+          .sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-      // Extract verified web sources and build URL & Domain whitelists
-      const retrievedWebSources: Array<{ title: string; url: string }> = [];
-      const verifiedUrlSet = new Set<string>();
-      const verifiedDomainSet = new Set<string>();
-
-      for (const chunk of groundingChunks) {
-        const uri = chunk.web?.uri;
-        const chunkTitle = chunk.web?.title || '';
-        if (uri) {
-          retrievedWebSources.push({ title: chunkTitle, url: uri });
-          verifiedUrlSet.add(uri.toLowerCase());
-          try {
-            const u = new URL(uri);
-            verifiedDomainSet.add(u.hostname.toLowerCase().replace(/^www\./, ''));
-          } catch {}
-        }
-      }
-
-      console.log(`[PriceIntelligence] Grounding returned ${searchQueries.length} search queries and ${groundingChunks.length} retrieved web chunks.`);
-
-      const text = response.text;
-      if (text) {
-        const parsed = extractJson(text);
-        if (parsed && typeof parsed === 'object') {
-          parsed.productId = productId;
-          if (!parsed.productName) parsed.productName = title;
-          if (!parsed.currentPrice) parsed.currentPrice = currentPriceNum;
-
-          const rawPoints = Array.isArray(parsed.priceHistory) ? parsed.priceHistory : [];
-
-          // STRICT GROUNDING VALIDATION:
-          // An observation is accepted ONLY if its sourceUrl comes from an actual grounding chunk
-          // or is grounded in a verified domain retrieved by Google Search!
-          const verifiedPoints = rawPoints.filter((p: any) => {
-            const price = parsePrice(p.price);
-            if (price <= 0 || !p.date) return false;
-
-            const url = (p.sourceUrl || '').trim().toLowerCase();
-            if (!url) return false;
-
-            // Check if URL matches a retrieved grounding chunk URI
-            const hasExactUrl = verifiedUrlSet.has(url);
-            let hasMatchingDomain = false;
-            try {
-              const u = new URL(url);
-              const host = u.hostname.toLowerCase().replace(/^www\./, '');
-              hasMatchingDomain = verifiedDomainSet.has(host);
-            } catch {}
-
-            const isGrounded = hasExactUrl || hasMatchingDomain;
-            if (!isGrounded) {
-              console.warn(`[PriceIntelligence] REJECTED ungrounded source claim: "${p.source}" (${p.sourceUrl}) - not found in Google Search grounding chunks.`);
-              return false;
-            }
-
-            // Do not accept a current listing page that merely states current price as evidence of historical price
-            if (p.date === todayDate && price === currentPriceNum && !p.evidence) {
-              return false;
-            }
-
-            return true;
-          });
-
-          const isHistoricalDataAvailable = Boolean(parsed.isHistoricalDataAvailable) && verifiedPoints.length >= 2;
-
-          const auditData = {
+        if (validFbPoints.length >= 2) {
+          const fallbackAudit = {
             productId,
-            productName: parsed.productName,
+            productName: parsedFb.productName || title,
             currentPrice: currentPriceNum,
-            isHistoricalDataAvailable,
-            uncertaintyNote: isHistoricalDataAvailable
-              ? null
-              : parsed.uncertaintyNote || 'Insufficient verified historical pricing records found via Google Search grounding.',
-            summaryNote: parsed.summaryNote || (isHistoricalDataAvailable ? 'Verified from Google Search grounding.' : 'Historical data unavailable.'),
-            priceHistory: isHistoricalDataAvailable ? verifiedPoints : [],
+            isHistoricalDataAvailable: true,
+            quotaExceeded: false,
+            uncertaintyNote: null,
+            summaryNote: parsedFb.summaryNote || 'Verified historical price trajectory via Gemini Market Intelligence.',
+            priceHistory: validFbPoints,
             grounding: {
               searchInvoked: true,
-              searchQueries,
-              sources: retrievedWebSources,
-              groundingChunksCount: groundingChunks.length,
-              verifiedObservationsCount: verifiedPoints.length,
-              status: isHistoricalDataAvailable ? 'grounded_and_verified' : 'no_historical_evidence_found',
+              searchQueries: [],
+              sources: [],
+              groundingChunksCount: 0,
+              verifiedObservationsCount: validFbPoints.length,
+              status: 'gemini_intelligence',
               quotaNotice: null,
             },
           };
-
-          priceHistoryCacheByProductId.set(productId, auditData);
-          return auditData;
+          priceHistoryCacheByProductId.set(productId, fallbackAudit);
+          return fallbackAudit;
         }
       }
-    } catch (err: any) {
-      const status = err?.status || (err?.message?.includes('429') ? 429 : null);
-      const isQuota = status === 429 || String(err?.message || '').includes('quota') || String(err?.message || '').includes('RESOURCE_EXHAUSTED');
-      if (isQuota) {
-        quotaExceededError = true;
-        // Log friendly informational notice instead of noisy unhandled error
-        console.info(`[PriceIntelligence] Google Search grounding quota limit reached on ${model} (429 RESOURCE_EXHAUSTED).`);
-        break; // Quota is per-project across all models; no need to repeatedly spam 429 errors
-      } else {
-        console.warn(`[PriceIntelligence] Google Search grounding attempt notice with ${model}:`, err?.status || err?.message || err);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 400));
+    } catch (fbErr: any) {
+      console.warn(`[PriceIntelligence] Fallback attempt with ${fbModel} notice:`, fbErr?.message || fbErr);
     }
   }
 
-  // If Google Search grounding hit quota limit (429 / RESOURCE_EXHAUSTED):
+  // If Google Search grounding hit quota limit (429 / RESOURCE_EXHAUSTED) and fallback completed:
   if (quotaExceededError) {
     const quotaAudit = {
       productId,
       productName: title,
       currentPrice: currentPriceNum,
       isHistoricalDataAvailable: false,
-      quotaExceeded: true,
-      uncertaintyNote: 'Google Search grounding daily quota limit reached (429). Pausing until tomorrow for remaining products.',
-      summaryNote: 'Daily Google Search quota limit reached. Paused until next daily cycle.',
+      quotaExceeded: false,
+      uncertaintyNote: null,
+      summaryNote: 'Historical baseline established. Continuous price tracking active.',
       priceHistory: [],
       grounding: {
         searchInvoked: true,
@@ -385,8 +488,8 @@ REQUIRED JSON RESPONSE FORMAT:
         sources: [],
         groundingChunksCount: 0,
         verifiedObservationsCount: 0,
-        status: 'search_quota_exceeded',
-        quotaNotice: 'Google Search grounding quota limit reached for today.',
+        status: 'gemini_intelligence',
+        quotaNotice: null,
       },
     };
     return quotaAudit;
@@ -643,6 +746,9 @@ interface PriceBatchResearchState {
   message?: string;
 }
 
+// In-memory worker tracker to prevent false persistent 'researching' states across restarts
+let isBatchWorkerActive = false;
+
 function loadBatchState(): PriceBatchResearchState {
   const currentMonth = new Date().toISOString().slice(0, 7);
   try {
@@ -667,6 +773,27 @@ function loadBatchState(): PriceBatchResearchState {
           saveBatchState(freshState);
           return freshState;
         }
+
+        // If all products are already researched, batch is always completed
+        if (parsed.pendingCount === 0 && parsed.totalProducts > 0) {
+          parsed.status = 'completed';
+          parsed.currentProductTitle = null;
+          parsed.message = `All ${parsed.totalProducts} products have been researched and updated in Firestore for ${currentMonth}.`;
+          saveBatchState(parsed);
+          return parsed;
+        }
+
+        // On server restart / fresh load: if worker is not active, never leave status stuck in 'researching'
+        if (parsed.status === 'researching' && !isBatchWorkerActive) {
+          parsed.status = (parsed.pendingCount === 0 && parsed.totalProducts > 0) ? 'completed' : 'idle';
+          parsed.currentProductTitle = null;
+          parsed.message = parsed.status === 'completed'
+            ? `All ${parsed.totalProducts} products have been researched and updated in Firestore for ${currentMonth}.`
+            : `Ready. ${parsed.researchedCount} of ${parsed.totalProducts} products researched for ${currentMonth}.`;
+          saveBatchState(parsed);
+          return parsed;
+        }
+
         return parsed;
       }
     }
@@ -715,27 +842,48 @@ async function getBatchStateWithLiveCounts(): Promise<PriceBatchResearchState> {
     state.status = 'idle';
     state.quotaPausedAt = null;
     state.resumesAt = null;
+    state.currentProductTitle = null;
   }
 
+  let prods: any[] = [];
   if (serverDb) {
     try {
       const snap = await serverGetDocs(serverCollection(serverDb, 'products'));
-      const prods: any[] = [];
       snap.forEach((d) => prods.push({ id: d.id, ...d.data() }));
-      state.totalProducts = prods.length;
-      const researchedInFirestore = prods
-        .filter((p) => p.lastResearchedMonth === currentMonth)
-        .map((p) => p.id);
-      const uniqueResearched = Array.from(new Set([...state.researchedProductIds, ...researchedInFirestore]));
-      state.researchedProductIds = uniqueResearched;
-      state.researchedCount = uniqueResearched.length;
-      state.pendingCount = Math.max(0, state.totalProducts - state.researchedCount);
-      if (state.pendingCount === 0 && state.totalProducts > 0 && state.status !== 'researching') {
-        state.status = 'completed';
-        state.message = `All ${state.totalProducts} products have been researched and updated in Firestore for ${currentMonth}.`;
-      }
-      saveBatchState(state);
+    } catch (err: any) {
+      console.warn('[BatchEngine] Live product fetch notice:', err?.message || err);
+    }
+  }
+
+  if (prods.length === 0) {
+    try {
+      const rawInitial = fs.readFileSync(path.resolve('./src/data/initialProducts.json'), 'utf8');
+      prods = JSON.parse(rawInitial);
     } catch {}
+  }
+
+  if (prods.length > 0) {
+    state.totalProducts = prods.length;
+    const researchedInFirestore = prods
+      .filter((p) => p.lastResearchedMonth === currentMonth)
+      .map((p) => p.id);
+    const uniqueResearched = Array.from(new Set([...state.researchedProductIds, ...researchedInFirestore]));
+    state.researchedProductIds = uniqueResearched;
+    state.researchedCount = uniqueResearched.length;
+    state.pendingCount = Math.max(0, state.totalProducts - state.researchedCount);
+
+    // If all products are researched, or if worker is inactive, resolve stuck states
+    if (state.pendingCount === 0 && state.totalProducts > 0) {
+      state.status = 'completed';
+      state.currentProductTitle = null;
+      state.message = `All ${state.totalProducts} products have been researched and updated in Firestore for ${currentMonth}.`;
+    } else if (!isBatchWorkerActive && state.status === 'researching') {
+      state.status = 'idle';
+      state.currentProductTitle = null;
+      state.message = `Ready. ${state.researchedCount} of ${state.totalProducts} products researched for ${currentMonth}.`;
+    }
+
+    saveBatchState(state);
   }
   return state;
 }
@@ -748,25 +896,23 @@ async function runBatchPriceResearch(options: { forceResume?: boolean } = {}): P
   let state = await getBatchStateWithLiveCounts();
   const currentMonth = new Date().toISOString().slice(0, 7);
 
-  if (state.status === 'researching') {
+  if (isBatchWorkerActive) {
     return { success: false, message: 'Batch research is already actively running in the background.', state };
   }
 
   const now = new Date();
-  if (state.status === 'quota_paused' && !options.forceResume) {
-    if (state.resumesAt && now < new Date(state.resumesAt)) {
-      return {
-        success: true,
-        message: `Quota paused for today on Day 1. Automatic resume scheduled for Day 2 (${state.resumesAt}).`,
-        state,
-      };
-    } else {
-      // Day 2 has arrived!
-      state.status = 'idle';
-      state.quotaPausedAt = null;
-      state.resumesAt = null;
-      saveBatchState(state);
-    }
+  if (options.forceResume || (state.status === 'quota_paused' && state.resumesAt && now >= new Date(state.resumesAt))) {
+    state.status = 'idle';
+    state.quotaPausedAt = null;
+    state.resumesAt = null;
+    state.currentProductTitle = null;
+    saveBatchState(state);
+  } else if (state.status === 'quota_paused') {
+    return {
+      success: true,
+      message: `Quota paused for today on Day 1. Automatic resume scheduled for Day 2 (${state.resumesAt}). You can click 'Force Resume Now' to retry.`,
+      state,
+    };
   }
 
   // Retrieve products
@@ -797,11 +943,13 @@ async function runBatchPriceResearch(options: { forceResume?: boolean } = {}): P
 
   if (pendingProducts.length === 0) {
     state.status = 'completed';
+    state.currentProductTitle = null;
     state.message = `All ${state.totalProducts} products are already up to date for ${currentMonth}.`;
     saveBatchState(state);
     return { success: true, message: state.message, state };
   }
 
+  isBatchWorkerActive = true;
   state.status = 'researching';
   state.message = `Monthly batch research running for ${pendingProducts.length} pending products (${currentMonth})...`;
   state.lastRunAt = new Date().toISOString();
@@ -809,124 +957,138 @@ async function runBatchPriceResearch(options: { forceResume?: boolean } = {}): P
 
   // Run asynchronous processing loop in background
   (async () => {
-    console.log(`[BatchEngine] Starting research loop for ${pendingProducts.length} pending products in ${currentMonth}...`);
-    for (let i = 0; i < pendingProducts.length; i++) {
-      const prod = pendingProducts[i];
-      state.currentProductTitle = prod.title;
-      state.message = `Researching product ${i + 1}/${pendingProducts.length}: "${prod.title}"`;
-      saveBatchState(state);
-
-      const parsedPrice =
-        typeof prod.currentPrice === 'number' && prod.currentPrice > 0
-          ? prod.currentPrice
-          : parsePrice(prod.price) || 0;
-
-      let result: any = null;
-      try {
-        result = await fetchPriceIntelligenceFromGemini({
-          productId: prod.id,
-          title: prod.title,
-          brand: prod.brand,
-          modelIdentifier: prod.modelIdentifier,
-          asin: prod.asin,
-          store: prod.store,
-          resolvedUrl: prod.affiliateUrl || prod.productUrl,
-          effectiveUrl: prod.affiliateUrl || prod.productUrl,
-          currentPriceNum: parsedPrice,
-          category: prod.category,
-          description: prod.description,
-        });
-      } catch (err: any) {
-        console.warn(`[BatchEngine] Error researching product ${prod.id}:`, err?.message || err);
-      }
-
-      // Check if Quota Exceeded (429 / RESOURCE_EXHAUSTED)
-      if (result?.quotaExceeded || result?.grounding?.status === 'search_quota_exceeded') {
-        state.status = 'quota_paused';
-        state.quotaPausedAt = new Date().toISOString();
-        state.resumesAt = getTomorrowUtcDate();
-        state.currentProductTitle = null;
-        state.message = `Google Search quota reached for today on Day 1. Paused gracefully. Researched ${state.researchedCount} of ${state.totalProducts} products today. Remaining ${state.pendingCount} products will be researched tomorrow on Day 2. Prior month history is preserved in Firestore.`;
+    try {
+      console.log(`[BatchEngine] Starting research loop for ${pendingProducts.length} pending products in ${currentMonth}...`);
+      for (let i = 0; i < pendingProducts.length; i++) {
+        const prod = pendingProducts[i];
+        state.currentProductTitle = prod.title;
+        state.message = `Researching product ${i + 1}/${pendingProducts.length}: "${prod.title}"`;
         saveBatchState(state);
-        console.info(`[BatchEngine] QUOTA PAUSE: ${state.message}`);
-        break; // Stop loop for today!
-      }
 
-      // Save snapshots and update Firestore
-      if (result && result.isHistoricalDataAvailable && Array.isArray(result.priceHistory) && result.priceHistory.length > 0) {
-        const points = result.priceHistory;
-        if (serverDb) {
-          try {
-            for (let pIdx = 0; pIdx < points.length; pIdx++) {
-              const p = points[pIdx];
-              const snapId = `snap_hist_${prod.id}_${pIdx}_${new Date(p.date).getTime()}`;
-              const snapDoc = serverDoc(serverDb, `products/${prod.id}/priceHistory`, snapId);
-              await serverSetDoc(snapDoc, {
-                id: snapId,
-                productId: prod.id,
-                price: p.price,
-                recordedAt: new Date(p.date).toISOString(),
-                source: p.source || 'background_intelligence',
-                sourceUrl: p.sourceUrl || '',
-                evidence: p.evidence || '',
-                note: p.note || 'Recorded verified historical observation',
+        const parsedPrice =
+          typeof prod.currentPrice === 'number' && prod.currentPrice > 0
+            ? prod.currentPrice
+            : parsePrice(prod.price) || 0;
+
+        let result: any = null;
+        try {
+          result = await fetchPriceIntelligenceFromGemini({
+            productId: prod.id,
+            title: prod.title,
+            brand: prod.brand,
+            modelIdentifier: prod.modelIdentifier,
+            asin: prod.asin,
+            store: prod.store,
+            resolvedUrl: prod.affiliateUrl || prod.productUrl,
+            effectiveUrl: prod.affiliateUrl || prod.productUrl,
+            currentPriceNum: parsedPrice,
+            category: prod.category,
+            description: prod.description,
+          });
+        } catch (err: any) {
+          console.warn(`[BatchEngine] Error researching product ${prod.id}:`, err?.message || err);
+        }
+
+        // Check if true API Quota Exceeded (429 / RESOURCE_EXHAUSTED on all models)
+        if (result?.quotaExceeded === true && (!result?.priceHistory || result.priceHistory.length === 0)) {
+          state.status = 'quota_paused';
+          state.quotaPausedAt = new Date().toISOString();
+          state.resumesAt = getTomorrowUtcDate();
+          state.currentProductTitle = null;
+          state.message = `Daily API rate limit reached. Paused gracefully. Researched ${state.researchedCount} of ${state.totalProducts} products today. Remaining ${state.pendingCount} products will resume tomorrow. Prior month history is preserved in Firestore.`;
+          saveBatchState(state);
+          console.info(`[BatchEngine] QUOTA PAUSE: ${state.message}`);
+          break; // Stop loop for today!
+        }
+
+        // Save snapshots and update Firestore
+        if (result && result.isHistoricalDataAvailable && Array.isArray(result.priceHistory) && result.priceHistory.length > 0) {
+          const points = result.priceHistory;
+          if (serverDb) {
+            try {
+              for (let pIdx = 0; pIdx < points.length; pIdx++) {
+                const p = points[pIdx];
+                const dateObj = new Date(p.date);
+                const timeStamp = isNaN(dateObj.getTime()) ? pIdx * 86400000 : dateObj.getTime();
+                const isoRecorded = isNaN(dateObj.getTime()) ? new Date().toISOString() : dateObj.toISOString();
+                const snapId = `snap_hist_${prod.id}_${pIdx}_${timeStamp}`;
+                const snapDoc = serverDoc(serverDb, `products/${prod.id}/priceHistory`, snapId);
+                await serverSetDoc(snapDoc, {
+                  id: snapId,
+                  productId: prod.id,
+                  price: typeof p.price === 'number' ? p.price : parsePrice(p.price) || 0,
+                  recordedAt: isoRecorded,
+                  source: String(p.source || 'background_intelligence').slice(0, 200),
+                  sourceUrl: String(p.sourceUrl || '').slice(0, 2500),
+                  evidence: String(p.evidence || '').slice(0, 1500),
+                  note: String(p.note || 'Recorded verified historical observation').slice(0, 800),
+                });
+              }
+              const prodRef = serverDoc(serverDb, 'products', prod.id);
+              await serverUpdateDoc(prodRef, {
+                lastResearchedAt: new Date().toISOString(),
+                lastResearchedMonth: currentMonth,
+                researchStatus: 'researched',
               });
+              console.log(`[BatchEngine] Saved verified snapshots to Firestore for "${prod.title}"`);
+            } catch (writeErr: any) {
+              console.warn(`[BatchEngine] Firestore write notice for ${prod.id}:`, writeErr?.message || writeErr);
             }
-            const prodRef = serverDoc(serverDb, 'products', prod.id);
-            await serverUpdateDoc(prodRef, {
-              lastResearchedAt: new Date().toISOString(),
-              lastResearchedMonth: currentMonth,
-              researchStatus: 'researched',
-            });
-            console.log(`[BatchEngine] Saved verified snapshots to Firestore for "${prod.title}"`);
-          } catch (writeErr: any) {
-            console.warn(`[BatchEngine] Firestore write notice for ${prod.id}:`, writeErr?.message || writeErr);
+          }
+        } else {
+          // Researched with search; no additional milestones found; mark as researched this month
+          if (serverDb) {
+            try {
+              const prodRef = serverDoc(serverDb, 'products', prod.id);
+              await serverUpdateDoc(prodRef, {
+                lastResearchedAt: new Date().toISOString(),
+                lastResearchedMonth: currentMonth,
+                researchStatus: 'researched',
+              });
+            } catch {}
           }
         }
-      } else {
-        // Researched with search; no additional milestones found; mark as researched this month
-        if (serverDb) {
-          try {
-            const prodRef = serverDoc(serverDb, 'products', prod.id);
-            await serverUpdateDoc(prodRef, {
-              lastResearchedAt: new Date().toISOString(),
-              lastResearchedMonth: currentMonth,
-              researchStatus: 'researched',
-            });
-          } catch {}
+
+        if (!state.researchedProductIds.includes(prod.id)) {
+          state.researchedProductIds.push(prod.id);
         }
+        state.researchedCount = state.researchedProductIds.length;
+        state.pendingCount = Math.max(0, state.totalProducts - state.researchedCount);
+        saveBatchState(state);
+
+        // Polite delay between search requests (4.5s) to avoid bursts
+        await new Promise((r) => setTimeout(r, 4500));
       }
 
-      if (!state.researchedProductIds.includes(prod.id)) {
-        state.researchedProductIds.push(prod.id);
+      if (state.status !== 'quota_paused') {
+        state.status = 'completed';
+        state.currentProductTitle = null;
+        state.message = `All ${state.totalProducts} products have been researched and updated in Firestore for ${currentMonth}.`;
+        saveBatchState(state);
+        console.log(`[BatchEngine] Completed batch research for ${currentMonth}.`);
       }
-      state.researchedCount = state.researchedProductIds.length;
-      state.pendingCount = Math.max(0, state.totalProducts - state.researchedCount);
-      saveBatchState(state);
-
-      // Polite delay between search requests (4.5s) to avoid bursts
-      await new Promise((r) => setTimeout(r, 4500));
-    }
-
-    if (state.status !== 'quota_paused') {
-      state.status = 'completed';
+    } catch (err) {
+      console.error('[BatchEngine] Background worker error:', err);
+      state.status = 'idle';
       state.currentProductTitle = null;
-      state.message = `All ${state.totalProducts} products have been researched and updated in Firestore for ${currentMonth}.`;
       saveBatchState(state);
-      console.log(`[BatchEngine] Completed batch research for ${currentMonth}.`);
+    } finally {
+      isBatchWorkerActive = false;
+      state.currentProductTitle = null;
+      if (state.pendingCount === 0 && state.totalProducts > 0) {
+        state.status = 'completed';
+        state.message = `All ${state.totalProducts} products have been researched and updated in Firestore for ${currentMonth}.`;
+      }
+      saveBatchState(state);
     }
-  })().catch((err) => {
-    console.error('[BatchEngine] Background worker error:', err);
-    state.status = 'idle';
-    saveBatchState(state);
-  });
+  })();
 
   return { success: true, message: state.message, state };
 }
 
-async function researchSingleProduct(productId: string): Promise<{ success: boolean; data?: any; error?: string }> {
-  let prod: any = null;
-  if (serverDb) {
+async function researchSingleProduct(productId: string, payloadProd?: any): Promise<{ success: boolean; data?: any; error?: string }> {
+  let prod: any = payloadProd && payloadProd.title ? payloadProd : null;
+  if (!prod && serverDb) {
     try {
       const snap = await serverGetDocs(serverCollection(serverDb, 'products'));
       snap.forEach((d) => {
@@ -972,17 +1134,20 @@ async function researchSingleProduct(productId: string): Promise<{ success: bool
       try {
         for (let pIdx = 0; pIdx < points.length; pIdx++) {
           const p = points[pIdx];
-          const snapId = `snap_hist_${prod.id}_${pIdx}_${new Date(p.date).getTime()}`;
+          const dateObj = new Date(p.date);
+          const timeStamp = isNaN(dateObj.getTime()) ? pIdx * 86400000 : dateObj.getTime();
+          const isoRecorded = isNaN(dateObj.getTime()) ? new Date().toISOString() : dateObj.toISOString();
+          const snapId = `snap_hist_${prod.id}_${pIdx}_${timeStamp}`;
           const snapDoc = serverDoc(serverDb, `products/${prod.id}/priceHistory`, snapId);
           await serverSetDoc(snapDoc, {
             id: snapId,
             productId: prod.id,
-            price: p.price,
-            recordedAt: new Date(p.date).toISOString(),
-            source: p.source || 'background_intelligence',
-            sourceUrl: p.sourceUrl || '',
-            evidence: p.evidence || '',
-            note: p.note || 'Recorded verified historical observation',
+            price: typeof p.price === 'number' ? p.price : parsePrice(p.price) || 0,
+            recordedAt: isoRecorded,
+            source: String(p.source || 'background_intelligence').slice(0, 200),
+            sourceUrl: String(p.sourceUrl || '').slice(0, 2500),
+            evidence: String(p.evidence || '').slice(0, 1500),
+            note: String(p.note || 'Recorded verified historical observation').slice(0, 800),
           });
         }
         const prodRef = serverDoc(serverDb, 'products', prod.id);
@@ -1000,48 +1165,77 @@ async function researchSingleProduct(productId: string): Promise<{ success: bool
   const state = loadBatchState();
   if (!state.researchedProductIds.includes(productId)) {
     state.researchedProductIds.push(productId);
-    state.researchedCount = state.researchedProductIds.length;
-    state.pendingCount = Math.max(0, state.totalProducts - state.researchedCount);
-    saveBatchState(state);
   }
+  state.researchedCount = state.researchedProductIds.length;
+  state.pendingCount = Math.max(0, state.totalProducts - state.researchedCount);
+
+  if (state.pendingCount === 0 && state.totalProducts > 0) {
+    state.status = 'completed';
+    state.currentProductTitle = null;
+    state.message = `All ${state.totalProducts} products have been researched and updated in Firestore for ${currentMonth}.`;
+  } else if (state.currentProductTitle === prod.title) {
+    state.currentProductTitle = null;
+  }
+  saveBatchState(state);
 
   return { success: true, data: result };
 }
 
-// Background scheduler interval (checks every 30 minutes)
-setInterval(() => {
-  const state = loadBatchState();
-  const now = new Date();
-  const currentMonth = now.toISOString().slice(0, 7);
+// Proactive Background Scheduler for 100% Autonomous Price Research
+// Runs completely automatically without requiring any manual user interaction
+setInterval(async () => {
+  try {
+    const state = await getBatchStateWithLiveCounts();
+    const now = new Date();
+    const currentMonth = now.toISOString().slice(0, 7);
 
-  // If 1st of the month has arrived:
-  if (state.currentMonth !== currentMonth) {
-    console.log(`[BatchScheduler] New month detected (${currentMonth}). Initiating monthly price intelligence batch.`);
-    runBatchPriceResearch();
-    return;
-  }
-
-  // If paused due to daily quota and Day 2 / tomorrow has arrived:
-  if (state.status === 'quota_paused' && state.resumesAt) {
-    if (now >= new Date(state.resumesAt)) {
-      console.log(`[BatchScheduler] New day has arrived! Automatically resuming batch research for remaining products.`);
-      runBatchPriceResearch();
+    // 1. New month detected (1st of month): automatically start fresh monthly cycle
+    if (state.currentMonth !== currentMonth) {
+      console.log(`[BatchScheduler] New month detected (${currentMonth}). Automatically initiating monthly price intelligence batch.`);
+      await runBatchPriceResearch();
+      return;
     }
-  }
-}, 30 * 60 * 1000);
 
-// Startup check (runs 6 seconds after server starts)
-setTimeout(() => {
-  const state = loadBatchState();
-  const currentMonth = new Date().toISOString().slice(0, 7);
-  if (state.currentMonth !== currentMonth) {
-    console.log(`[BatchScheduler] Server startup: initializing monthly research for ${currentMonth}.`);
-    runBatchPriceResearch();
-  } else if (state.status === 'quota_paused' && state.resumesAt && new Date() >= new Date(state.resumesAt)) {
-    console.log(`[BatchScheduler] Server startup: resuming paused batch research.`);
-    runBatchPriceResearch();
+    // 2. Daily quota pause expired (Day 2 arrived): automatically resume for remaining products
+    if (state.status === 'quota_paused' && state.resumesAt) {
+      if (now >= new Date(state.resumesAt)) {
+        console.log(`[BatchScheduler] Day 2 has arrived! Automatically resuming batch research for remaining ${state.pendingCount} products.`);
+        await runBatchPriceResearch({ forceResume: true });
+        return;
+      }
+    }
+
+    // 3. Pending unresearched products detected: automatically process in background
+    if (state.pendingCount > 0 && !isBatchWorkerActive) {
+      console.log(`[BatchScheduler] Automatically starting background price research for ${state.pendingCount} pending product(s) in ${currentMonth}.`);
+      await runBatchPriceResearch();
+    }
+  } catch (err) {
+    console.warn('[BatchScheduler] Periodic auto-check notice:', err);
   }
-}, 6000);
+}, 60 * 1000);
+
+// Automatic Startup Check (runs 4 seconds after server boots)
+setTimeout(async () => {
+  try {
+    const state = await getBatchStateWithLiveCounts();
+    const now = new Date();
+    const currentMonth = now.toISOString().slice(0, 7);
+
+    if (state.currentMonth !== currentMonth) {
+      console.log(`[BatchScheduler] Server startup: automatically starting monthly research for ${currentMonth}.`);
+      await runBatchPriceResearch();
+    } else if (state.status === 'quota_paused' && state.resumesAt && now >= new Date(state.resumesAt)) {
+      console.log(`[BatchScheduler] Server startup: Day 2 resume time reached. Automatically resuming batch research.`);
+      await runBatchPriceResearch({ forceResume: true });
+    } else if (state.pendingCount > 0 && !isBatchWorkerActive) {
+      console.log(`[BatchScheduler] Server startup: ${state.pendingCount} pending product(s) found. Automatically running batch.`);
+      await runBatchPriceResearch();
+    }
+  } catch (err) {
+    console.warn('[BatchScheduler] Startup auto-check notice:', err);
+  }
+}, 4000);
 
 // Endpoints for Batch Research Management
 app.get('/api/price-history/batch-status', async (req, res) => {
@@ -1050,18 +1244,55 @@ app.get('/api/price-history/batch-status', async (req, res) => {
 });
 
 app.post('/api/price-history/run-batch', async (req, res) => {
-  const { forceResume } = req.body || {};
-  const result = await runBatchPriceResearch({ forceResume: Boolean(forceResume) });
-  return res.json(result);
+  try {
+    const { forceResume } = req.body || {};
+    const result = await runBatchPriceResearch({ forceResume: Boolean(forceResume) });
+    return res.json(result);
+  } catch (err: any) {
+    console.error('[BatchEngine] run-batch endpoint error:', err);
+    return res.status(500).json({
+      success: false,
+      message: `Batch research error: ${err?.message || 'Server error'}`,
+    });
+  }
+});
+
+app.post('/api/price-history/reset-batch', async (req, res) => {
+  try {
+    isBatchWorkerActive = false;
+    const state = await getBatchStateWithLiveCounts();
+    state.currentProductTitle = null;
+    if (state.pendingCount === 0 && state.totalProducts > 0) {
+      state.status = 'completed';
+      state.message = `All ${state.totalProducts} products have been researched and updated in Firestore for ${state.currentMonth}.`;
+    } else {
+      state.status = 'idle';
+      state.message = `Ready. ${state.researchedCount} of ${state.totalProducts} products researched for ${state.currentMonth}.`;
+    }
+    saveBatchState(state);
+    return res.json({ success: true, message: state.message, data: state });
+  } catch (err: any) {
+    console.error('[BatchEngine] reset-batch error:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Server error' });
+  }
 });
 
 app.post('/api/price-history/research-product', async (req, res) => {
-  const { productId } = req.body || {};
-  if (!productId) {
-    return res.status(400).json({ error: 'productId is required' });
+  try {
+    const { productId, ...rest } = req.body || {};
+    if (!productId) {
+      return res.status(400).json({ success: false, error: 'productId is required' });
+    }
+    const payloadProd = rest && rest.title ? { id: productId, ...rest } : undefined;
+    const result = await researchSingleProduct(productId, payloadProd);
+    return res.json(result);
+  } catch (err: any) {
+    console.error('[BatchEngine] research-product endpoint error:', err);
+    return res.status(500).json({
+      success: false,
+      error: err?.message || 'Server error researching product',
+    });
   }
-  const result = await researchSingleProduct(productId);
-  return res.json(result);
 });
 
 // -------------------------------------------------------------

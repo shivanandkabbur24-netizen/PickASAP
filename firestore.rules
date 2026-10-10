@@ -73,10 +73,11 @@ service cloud.firestore {
       return data.id is string && data.id.size() <= 128 &&
              data.price is number && data.price >= 0 &&
              data.recordedAt is string &&
-             data.source is string && data.source.size() <= 100 &&
-             (!('sourceUrl' in data) || (data.sourceUrl is string && data.sourceUrl.size() <= 2000)) &&
-             (!('note' in data) || (data.note is string && data.note.size() <= 500)) &&
-             (!('dropPercentage' in data) || (data.dropPercentage is string && data.dropPercentage.size() <= 50)) &&
+             data.source is string && data.source.size() <= 250 &&
+             (!('sourceUrl' in data) || (data.sourceUrl is string && data.sourceUrl.size() <= 3000)) &&
+             (!('evidence' in data) || (data.evidence is string && data.evidence.size() <= 2000)) &&
+             (!('note' in data) || (data.note is string && data.note.size() <= 1000)) &&
+             (!('dropPercentage' in data) || (data.dropPercentage is string && data.dropPercentage.size() <= 100) || data.dropPercentage is number) &&
              (!('productId' in data) || (data.productId is string && data.productId.size() <= 128)) &&
              (!('isLowest' in data) || data.isLowest is bool) &&
              (!('isHighest' in data) || data.isHighest is bool) &&
@@ -143,18 +144,18 @@ service cloud.firestore {
       allow update: if isValidId(productId) && (
         isAdmin() ||
         isValidProduct(incoming()) ||
-        incoming().diff(existing()).affectedKeys().hasOnly(['clicksCount', 'monthlyClicks', 'lastResearchedAt', 'lastResearchedMonth', 'researchStatus'])
+        incoming().diff(existing()).affectedKeys().hasOnly(['clicksCount', 'monthlyClicks', 'lastResearchedAt', 'lastResearchedMonth', 'researchStatus', 'currentPrice', 'price', 'lastUpdated', 'originalPrice', 'discount', 'discountPercent', 'dealStatus', 'offerDescription'])
       );
 
       // Allow deleting products
       allow delete: if isValidId(productId) && (isAdmin() || (isSignedIn() && existing().uploaderId == request.auth.uid));
 
-      // Subcollection: Immutable chronological price-history snapshots
-      // Public users can read approved price history
+      // Subcollection: Chronological price-history snapshots
+      // Public users can read approved price history; updates allowed for idempotent refresh with valid snapshot structure
       match /priceHistory/{snapshotId} {
         allow read: if true;
-        allow create: if isValidId(snapshotId) && isValidPriceSnapshot(incoming());
-        allow update, delete: if false; // Snapshots cannot be overwritten or deleted
+        allow create, update: if isValidId(snapshotId) && isValidPriceSnapshot(incoming());
+        allow delete: if isAdmin();
       }
     }
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   TrendingDown,
   Calendar,
@@ -20,6 +20,7 @@ import { databaseService as db, formatPriceDisplay } from '../lib/firebase';
 import {
   fetchBackgroundPriceHistory,
   getCachedPriceIntelligence,
+  saveCachedPriceIntelligence,
   generateClientPriceHistory,
 } from '../lib/priceIntelligence';
 
@@ -70,7 +71,7 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
     snapshot: PriceSnapshot;
   } | null>(null);
 
-  // Manual research trigger (available for admins or explicit re-research)
+  // Autonomous background price research trigger (runs automatically without user action)
   const runBackgroundPriceFetch = useCallback(async () => {
     if (!productId) return;
     setRefreshing(true);
@@ -80,19 +81,87 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
       const response = await fetch('/api/price-history/research-product', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ productId }),
+        body: JSON.stringify({
+          productId,
+          title: product?.title,
+          brand: product?.brand,
+          modelIdentifier: product?.modelIdentifier,
+          store: product?.store,
+          currentPrice: currentPrice || product?.currentPrice,
+        }),
       });
-      const json = await response.json();
-      if (json && json.success && json.data) {
-        setIntelligence(json.data);
+      const ct = response.headers.get('content-type') || '';
+      if (response.ok && ct.includes('application/json')) {
+        const json = await response.json();
+        if (json && json.success && json.data) {
+          setIntelligence(json.data);
+          const points = Array.isArray(json.data.priceHistory) ? json.data.priceHistory : [];
+          if (points.length > 0) {
+            const snaps: PriceSnapshot[] = points.map((p: any, idx: number) => {
+              const dateObj = new Date(p.date);
+              const timeStamp = isNaN(dateObj.getTime()) ? idx * 86400000 : dateObj.getTime();
+              const isoRecorded = isNaN(dateObj.getTime()) ? new Date().toISOString() : dateObj.toISOString();
+              return {
+                id: `snap_hist_${productId}_${idx}_${timeStamp}`,
+                productId,
+                price: typeof p.price === 'number' ? p.price : Number(p.price) || 0,
+                recordedAt: isoRecorded,
+                source: String(p.source || 'verified_intelligence').slice(0, 200),
+                sourceUrl: p.sourceUrl ? String(p.sourceUrl).slice(0, 2500) : undefined,
+                evidence: p.evidence ? String(p.evidence).slice(0, 1500) : undefined,
+                note: p.note ? String(p.note).slice(0, 800) : 'Recorded verified price',
+                dropPercentage: p.dropPercentage,
+                isLowest: p.isLowest,
+                isHighest: p.isHighest,
+              };
+            });
+            setSnapshots(snaps);
+            db.savePriceHistoryBatch(productId, snaps);
+            saveCachedPriceIntelligence(productId, json.data);
+            window.dispatchEvent(
+              new CustomEvent('pickasap:price_snapshot_added', {
+                detail: { productId, snapshots: snaps },
+              })
+            );
+            return;
+          }
+        }
+      }
+
+      // Direct client fallback
+      if (product) {
+        const intel = await fetchBackgroundPriceHistory(product);
+        if (intel) {
+          setIntelligence(intel);
+        }
       }
     } catch (err) {
-      console.warn('Manual price research notice:', err);
+      console.warn('Background price research notice:', err);
+      if (product) {
+        try {
+          const intel = await fetchBackgroundPriceHistory(product);
+          if (intel) setIntelligence(intel);
+        } catch {}
+      }
     } finally {
       setRefreshing(false);
       setIsResearching(false);
     }
-  }, [productId]);
+  }, [productId, product, currentPrice]);
+
+  // Completely Automatic: If product has no historical points yet, auto-research in background!
+  const hasAutoFetchedRef = useRef(false);
+  useEffect(() => {
+    if (loading || hasAutoFetchedRef.current || !productId) return;
+    const hasHistory =
+      snapshots.length > 1 ||
+      (intelligence?.isHistoricalDataAvailable && (intelligence.priceHistory?.length ?? 0) > 1);
+
+    if (!hasHistory) {
+      hasAutoFetchedRef.current = true;
+      runBackgroundPriceFetch();
+    }
+  }, [loading, productId, snapshots.length, intelligence, runBackgroundPriceFetch]);
 
   // Real-time listener for price history snapshots of this product from Firestore
   useEffect(() => {

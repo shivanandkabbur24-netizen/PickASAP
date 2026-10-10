@@ -648,6 +648,22 @@ export const databaseService = {
     const fastTimeout = new Promise((resolve) => setTimeout(resolve, 400));
     await Promise.race([firestoreWrite, fastTimeout]);
 
+    // 6. Automatically trigger background price intelligence research for this newly uploaded product
+    try {
+      fetch('/api/price-history/research-product', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          productId: product.id,
+          title: product.title,
+          brand: product.brand,
+          modelIdentifier: product.modelIdentifier,
+          store: product.store,
+          currentPrice: product.currentPrice,
+        }),
+      }).catch(() => {});
+    } catch {}
+
     return product;
   },
 
@@ -912,6 +928,26 @@ export const databaseService = {
     }
 
     return { product: updatedProduct, snapshotCreated };
+  },
+
+  // Update product price intelligence research metadata
+  async updateProductResearchStatus(
+    productId: string,
+    data: {
+      lastResearchedMonth: string;
+      lastResearchedAt: string;
+      researchStatus: 'researched' | 'pending' | 'quota_paused' | 'from_prior_month';
+    }
+  ): Promise<void> {
+    try {
+      const products = getStoredProducts();
+      const updated = products.map((p) => (p.id === productId ? { ...p, ...data } : p));
+      setStoredProducts(updated);
+      const cleanUpdate = sanitizeFirestoreData(data);
+      await updateDoc(doc(db, 'products', productId), cleanUpdate);
+    } catch (err) {
+      console.warn('Firestore updateProductResearchStatus notice:', err);
+    }
   },
 
   // Delete product from Firestore smoothly

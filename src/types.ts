@@ -112,6 +112,7 @@ export interface PriceIntelligenceData {
   summaryNote?: string;
   isHistoricalDataAvailable?: boolean;
   uncertaintyNote?: string | null;
+  quotaExceeded?: boolean;
   grounding?: GroundingAuditMetadata;
   priceHistory: PriceHistoryPoint[];
   milestones?: PriceMilestone[];

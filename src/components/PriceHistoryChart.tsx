@@ -88,6 +88,9 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
           modelIdentifier: product?.modelIdentifier,
           store: product?.store,
           currentPrice: currentPrice || product?.currentPrice,
+          productUrl: product?.productUrl || product?.affiliateUrl,
+          affiliateUrl: product?.affiliateUrl,
+          forceRefresh: true,
         }),
       });
       const ct = response.headers.get('content-type') || '';
@@ -223,26 +226,8 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
 
     let rawSnaps: PriceSnapshot[] = [];
 
-    // 1. If Gemini price intelligence has verified historical points for THIS specific product:
-    const intelPoints = intel?.priceHistory;
-    if (intel?.isHistoricalDataAvailable && Array.isArray(intelPoints) && intelPoints.length > 0) {
-      rawSnaps = intelPoints
-        .filter((m: any) => m && m.price > 0 && m.date)
-        .map((m: any, idx: number) => ({
-          id: `snap_hist_${productId}_${idx}_${new Date(m.date).getTime()}`,
-          productId,
-          price: m.price,
-          recordedAt: new Date(m.date).toISOString(),
-          source: m.source || 'verified_intelligence',
-          sourceUrl: m.sourceUrl,
-          evidence: m.evidence,
-          note: m.note || 'Recorded verified price',
-          dropPercentage: m.dropPercentage,
-          isLowest: m.isLowest,
-          isHighest: m.isHighest,
-        }));
-    } else if (Array.isArray(snapshots) && snapshots.length > 0) {
-      // 2. Otherwise check snapshots from Firestore for THIS exact productId
+    // 1. Prioritize authentic Firestore cloud database snapshots for THIS productId
+    if (Array.isArray(snapshots) && snapshots.length > 0) {
       rawSnaps = snapshots
         .filter((s) => !s.productId || s.productId === productId)
         .filter((s) => s && s.price > 0 && s.recordedAt)
@@ -250,7 +235,42 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
           ...s,
           evidence: s.evidence,
         }));
+    } else {
+      // 2. Otherwise check Gemini price intelligence for THIS specific product
+      const intelPoints = intel?.priceHistory;
+      if (intel?.isHistoricalDataAvailable && Array.isArray(intelPoints) && intelPoints.length > 0) {
+        rawSnaps = intelPoints
+          .filter((m: any) => m && m.price > 0 && m.date)
+          .map((m: any, idx: number) => ({
+            id: `snap_hist_${productId}_${idx}_${new Date(m.date).getTime()}`,
+            productId,
+            price: m.price,
+            recordedAt: new Date(m.date).toISOString(),
+            source: m.source || 'verified_intelligence',
+            sourceUrl: m.sourceUrl,
+            evidence: m.evidence,
+            note: m.note || 'Recorded verified price',
+            dropPercentage: m.dropPercentage,
+            isLowest: m.isLowest,
+            isHighest: m.isHighest,
+          }));
+      }
     }
+
+    // Deduplicate snapshots by date (keeping the verified milestone with lowest price & notes)
+    const dateMap = new Map<string, PriceSnapshot>();
+    for (const snap of rawSnaps) {
+      const dateKey = snap.recordedAt.split('T')[0];
+      if (!dateMap.has(dateKey)) {
+        dateMap.set(dateKey, snap);
+      } else {
+        const existing = dateMap.get(dateKey)!;
+        if (snap.price < existing.price || (!existing.evidence && snap.evidence)) {
+          dateMap.set(dateKey, snap);
+        }
+      }
+    }
+    rawSnaps = Array.from(dateMap.values());
 
     // Sort chronologically
     rawSnaps.sort(

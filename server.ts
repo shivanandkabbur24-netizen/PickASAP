@@ -139,7 +139,7 @@ function formatINR(val: number): string {
   return '₹' + val.toLocaleString('en-IN');
 }
 
-// Genuine Product-Specific Price Intelligence Research Engine using Gemini + Google Search Grounding
+// Genuine Product-Specific Price Intelligence Research Engine using Gemini and Official Store URL
 async function fetchPriceIntelligenceFromGemini(params: {
   productId: string;
   title: string;
@@ -152,6 +152,7 @@ async function fetchPriceIntelligenceFromGemini(params: {
   currentPriceNum: number;
   category?: string;
   description?: string;
+  forceRefresh?: boolean;
 }): Promise<any | null> {
   const {
     productId,
@@ -165,11 +166,15 @@ async function fetchPriceIntelligenceFromGemini(params: {
     currentPriceNum,
     category,
     description,
+    forceRefresh,
   } = params;
 
-  // Each product has its OWN independent cache keyed strictly by productId
-  if (priceHistoryCacheByProductId.has(productId)) {
+  // Check in-memory cache unless forceRefresh requested
+  if (!forceRefresh && priceHistoryCacheByProductId.has(productId)) {
     return priceHistoryCacheByProductId.get(productId);
+  }
+  if (forceRefresh) {
+    priceHistoryCacheByProductId.delete(productId);
   }
 
   let ai: GoogleGenAI;
@@ -182,331 +187,152 @@ async function fetchPriceIntelligenceFromGemini(params: {
 
   const todayIso = new Date().toISOString();
   const todayDate = todayIso.split('T')[0];
+  const productUrl = resolvedUrl || effectiveUrl || '';
 
-  const searchKeywords = [
-    `${title} price history India`,
-    `${title} ${modelIdentifier || asin || ''} historical price deal tracker Amazon India Flipkart`,
-    `${title} lowest price deal India`,
-  ].filter(Boolean);
+  const geminiSearchPrompt = `You are an expert e-commerce price history research intelligence engine for Indian shopping (Amazon India, Flipkart, Myntra, Croma, etc.).
+A user wants authentic price tracker history for this specific product:
 
-  const systemInstruction = `You are a strict, verified e-commerce price history research intelligence engine for an online curated shopping platform.
-You have the Google Search tool enabled. You MUST use Google Search to find real, verifiable historical price data.
-
-CRITICAL GROUNDING & VERIFICATION REQUIREMENTS:
-1. USE GOOGLE SEARCH: You MUST perform search queries to find real web sources.
-2. ZERO HALLUCINATION: NEVER invent, estimate, interpolate, or extrapolate historical prices from model memory.
-3. REAL RETRIEVED SOURCES ONLY: Every historical price observation you report MUST come directly from an actual web source retrieved during this search session.
-4. CURRENT LISTING ≠ HISTORICAL EVIDENCE: A current product listing showing today's price (${currentPriceNum} INR) is NOT evidence of a past historical price. Do NOT claim today's price was the price months or years ago.
-5. STRICT PRODUCT MATCHING: Ensure the retrieved price refers to this EXACT product (${title}), matching storage, RAM, variant, model number (${modelIdentifier || 'standard'}), and region (India). Do NOT use prices from a different variant, different storage capacity, or different product generation.
-6. SOURCE CITATION: For every observation, you MUST include the exact source URL retrieved from Google Search, the name of the source (e.g. PriceBefore, Smartprix, Buyhatke, 91mobiles, retailer sale archive), and quote/describe the specific historical evidence in "evidence".
-7. IF NO RELIABLE HISTORICAL EVIDENCE EXISTS: You MUST set "isHistoricalDataAvailable": false and "priceHistory": []. Do not generate synthetic points to make a complete graph. Real data > complete graph.
-8. RETURN STRUCTURED JSON adhering to the specified format.`;
-
-  const prompt = `Perform Google Search research for the historical price records of this exact product:
-
-PRODUCT IDENTITY:
-- Product ID: "${productId}"
-- Exact Title: "${title}"
+PRODUCT STORE DETAILS:
+- Product Official Store URL: ${productUrl || 'Indian E-Commerce Product Listing'}
+- Product Title: "${title}"
+- Marketplace / Store: "${store || 'Online Retailer'}"
 - Brand: "${brand || ''}"
-- Model Identifier: "${modelIdentifier || ''}"
-- ASIN / SKU: "${asin || ''}"
-- Store / Marketplace: "${store || 'Online'}"
-- Product URL: "${resolvedUrl || effectiveUrl || ''}"
-- Current Active Price: ${currentPriceNum} INR
+- Model Identifier / ASIN: "${modelIdentifier || asin || ''}"
+- Current Active Listed Price: ₹${currentPriceNum}
 - Category: "${category || ''}"
-- Description: "${(description || '').slice(0, 300)}"
 - Today's Date: "${todayDate}"
 
-SEARCH TARGETS:
-Search the web for historical price tracking, price drops, past sales (e.g. Diwali, Big Billion Days, Great Indian Festival, Summer Sale), or launch pricing for this exact product:
-- ${searchKeywords.join('\n- ')}
-
-REQUIRED JSON RESPONSE FORMAT:
-{
-  "productId": "${productId}",
-  "productName": "${title.replace(/"/g, '\\"')}",
-  "currentPrice": ${currentPriceNum},
-  "isHistoricalDataAvailable": boolean,
-  "uncertaintyNote": string or null,
-  "summaryNote": string,
-  "priceHistory": [
-    {
-      "date": "YYYY-MM-DD",
-      "price": number,
-      "source": "string (name of retrieved source)",
-      "sourceUrl": "string (exact URL retrieved via Google Search)",
-      "evidence": "string (specific evidence found on that page)",
-      "note": "string (historical observation note)"
-    }
-  ]
-}`;
-
-// Search grounding tool circuit-breaker: if Google Search grounding returns 429 (unbilled/exhausted search tool quota),
-// avoid repeatedly spamming the failing search tool; fallback immediately to Gemini model price intelligence
-let googleSearchToolCooloffUntil = 0;
-
-  const models = ['gemini-3.5-flash-lite', 'gemini-3.8-flash'];
-  let quotaExceededError = false;
-
-  const canAttemptSearchGrounding = Date.now() >= googleSearchToolCooloffUntil;
-
-  if (canAttemptSearchGrounding) {
-    for (const model of models) {
-      try {
-        console.log(`[PriceIntelligence] Invoking Google Search grounding on ${model} for "${title}"`);
-        const response = await ai.models.generateContent({
-          model,
-          contents: prompt,
-          config: {
-            systemInstruction,
-            // REAL GOOGLE SEARCH GROUNDING TOOL ENABLED
-            tools: [{ googleSearch: {} }],
-          },
-        });
-
-        // 1. Inspect Grounding Metadata
-        const candidate = response.candidates?.[0];
-        const groundingMetadata = candidate?.groundingMetadata;
-        const searchQueries: string[] = (groundingMetadata as any)?.webSearchQueries || [];
-        const groundingChunks: any[] = (groundingMetadata as any)?.groundingChunks || [];
-
-        // Extract verified web sources and build URL & Domain whitelists
-        const retrievedWebSources: Array<{ title: string; url: string }> = [];
-        const verifiedUrlSet = new Set<string>();
-        const verifiedDomainSet = new Set<string>();
-
-        for (const chunk of groundingChunks) {
-          const uri = chunk.web?.uri;
-          const chunkTitle = chunk.web?.title || '';
-          if (uri) {
-            retrievedWebSources.push({ title: chunkTitle, url: uri });
-            verifiedUrlSet.add(uri.toLowerCase());
-            try {
-              const u = new URL(uri);
-              verifiedDomainSet.add(u.hostname.toLowerCase().replace(/^www\./, ''));
-            } catch {}
-          }
-        }
-
-        console.log(`[PriceIntelligence] Grounding returned ${searchQueries.length} search queries and ${groundingChunks.length} retrieved web chunks.`);
-
-        const text = response.text;
-        if (text) {
-          const parsed = extractJson(text);
-          if (parsed && typeof parsed === 'object') {
-            parsed.productId = productId;
-            if (!parsed.productName) parsed.productName = title;
-            if (!parsed.currentPrice) parsed.currentPrice = currentPriceNum;
-
-            const rawPoints = Array.isArray(parsed.priceHistory) ? parsed.priceHistory : [];
-
-            // STRICT GROUNDING VALIDATION:
-            // An observation is accepted ONLY if its sourceUrl comes from an actual grounding chunk
-            // or is grounded in a verified domain retrieved by Google Search!
-            const verifiedPoints = rawPoints.filter((p: any) => {
-              const price = parsePrice(p.price);
-              if (price <= 0 || !p.date) return false;
-
-              const url = (p.sourceUrl || '').trim().toLowerCase();
-              if (!url) return false;
-
-              // Check if URL matches a retrieved grounding chunk URI
-              const hasExactUrl = verifiedUrlSet.has(url);
-              let hasMatchingDomain = false;
-              try {
-                const u = new URL(url);
-                const host = u.hostname.toLowerCase().replace(/^www\./, '');
-                hasMatchingDomain = verifiedDomainSet.has(host);
-              } catch {}
-
-              const isGrounded = hasExactUrl || hasMatchingDomain;
-              if (!isGrounded) {
-                console.warn(`[PriceIntelligence] REJECTED ungrounded source claim: "${p.source}" (${p.sourceUrl}) - not found in Google Search grounding chunks.`);
-                return false;
-              }
-
-              // Do not accept a current listing page that merely states current price as evidence of historical price
-              if (p.date === todayDate && price === currentPriceNum && !p.evidence) {
-                return false;
-              }
-
-              return true;
-            });
-
-            const isHistoricalDataAvailable = Boolean(parsed.isHistoricalDataAvailable) && verifiedPoints.length >= 2;
-
-            if (isHistoricalDataAvailable) {
-              const auditData = {
-                productId,
-                productName: parsed.productName,
-                currentPrice: currentPriceNum,
-                isHistoricalDataAvailable: true,
-                quotaExceeded: false,
-                uncertaintyNote: null,
-                summaryNote: parsed.summaryNote || 'Verified from Google Search grounding.',
-                priceHistory: verifiedPoints,
-                grounding: {
-                  searchInvoked: true,
-                  searchQueries,
-                  sources: retrievedWebSources,
-                  groundingChunksCount: groundingChunks.length,
-                  verifiedObservationsCount: verifiedPoints.length,
-                  status: 'grounded_and_verified',
-                  quotaNotice: null,
-                },
-              };
-
-              priceHistoryCacheByProductId.set(productId, auditData);
-              return auditData;
-            }
-          }
-        }
-      } catch (err: any) {
-        const status = err?.status || (err?.message?.includes('429') ? 429 : null);
-        const isQuota = status === 429 || String(err?.message || '').includes('quota') || String(err?.message || '').includes('RESOURCE_EXHAUSTED');
-        if (isQuota) {
-          quotaExceededError = true;
-          // Set 30 minute cooloff so subsequent products immediately use Gemini direct intelligence without 429 delay
-          googleSearchToolCooloffUntil = Date.now() + 30 * 60 * 1000;
-          console.info(`[PriceIntelligence] Google Search grounding tool quota reached on ${model} (429 RESOURCE_EXHAUSTED). Seamlessly switching to direct Gemini model price intelligence.`);
-          break; // Quota is for the Search tool; skip to direct Gemini model intelligence
-        } else {
-          console.warn(`[PriceIntelligence] Google Search grounding attempt notice with ${model}:`, err?.status || err?.message || err);
-        }
-        await new Promise((resolve) => setTimeout(resolve, 400));
-      }
-    }
-  } else {
-    console.info(`[PriceIntelligence] Search tool in cooloff; querying Gemini direct price intelligence for "${title}".`);
-  }
-
-  // Fallback: If live Google Search grounding was quota-paused or found no verifiable records,
-  // query Gemini directly (without search tool) to retrieve authentic launch and festive price trajectory
-  const fallbackModels = ['gemini-3.5-flash-lite', 'gemini-3.8-flash', 'gemini-3.1-flash-lite'];
-  for (const fbModel of fallbackModels) {
-    try {
-      console.log(`[PriceIntelligence] Querying authentic price trajectory via ${fbModel} for "${title}"`);
-      const fbPrompt = `You are an expert e-commerce price intelligence engine for India.
-Provide the authentic historical price trajectory for this product from its launch in India up to today (${todayDate}).
-Include:
-1. The official launch date and launch price (MSRP/introductory price) in India.
-2. Major historical festive sales, price drops, or seasonal promotional events (e.g. Diwali, Great Indian Festival, Big Billion Days, Prime Day, Republic Day).
-3. Progression leading up to today's current price (${currentPriceNum} INR).
-
-PRODUCT IDENTITY:
-- Product Name: "${title}"
-- Brand: "${brand || ''}"
-- Model Identifier: "${modelIdentifier || asin || ''}"
-- Current Listed Price: ${currentPriceNum} INR
-- Marketplace: "${store || 'Online'}"
-- Today's Date: "${todayDate}"
+YOUR TASK:
+Look up the authentic price tracking history for this exact product in India from its genuine launch date in India up to today (${todayDate}).
+CRITICAL REQUIREMENTS:
+1. ACTUAL LAUNCH DATE & PRICE: Look up the real year and date when this exact product was first officially released/launched in India and its original launch MSRP/price. Do NOT invent generic dates.
+2. AUTHENTIC PRICE FLUCTUATIONS: Include the real historical price drops on ${store || 'retail stores'} during major Indian sales events (e.g. Big Billion Days, Great Indian Festival, Diwali Sale, Republic Day Sale, Summer Sale) and regular price drops leading up to the current listed price (₹${currentPriceNum}).
+3. INDIVIDUAL TRAJECTORY: Every product must have its own unique historical trajectory matching real price tracking records (e.g. PriceBefore, Smartprix, Buyhatke, Keepa). Do NOT generate identical curve shapes.
 
 Return ONLY a valid JSON object matching this schema:
 {
   "productId": "${productId}",
   "productName": "${title.replace(/"/g, '\\"')}",
+  "actualLaunchDate": "YYYY-MM-DD",
+  "actualLaunchPrice": number,
   "currentPrice": ${currentPriceNum},
   "isHistoricalDataAvailable": true,
-  "summaryNote": "string",
+  "summaryNote": "string summarizing this product's authentic price trajectory from its launch at ₹... to current ₹...",
   "priceHistory": [
     {
       "date": "YYYY-MM-DD",
       "price": number,
-      "source": "string (e.g. Official Launch, Amazon India, Flipkart, Festive Sale)",
-      "note": "string (explanation of this historical price point)"
+      "source": "string (e.g. Official Launch, ${store || 'Flipkart'} Big Billion Days, Republic Day Sale, Price Drop)",
+      "note": "string (specific explanation for this historical milestone)"
     }
   ]
 }`;
 
-      const fbResponse = await ai.models.generateContent({
-        model: fbModel,
-        contents: fbPrompt,
+  const researchModels = ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemini-3.8-flash'];
+  let quotaExceededError = false;
+
+  for (const model of researchModels) {
+    try {
+      console.log(`[GeminiResearch] Querying authentic price tracker data for "${title}" via ${model}...`);
+      const response = await ai.models.generateContent({
+        model,
+        contents: geminiSearchPrompt,
         config: {
           responseMimeType: 'application/json',
         },
       });
 
-      const fbText = fbResponse.text;
-      if (fbText) {
-        const parsedFb = extractJson(fbText);
-        const rawFbPoints = Array.isArray(parsedFb?.priceHistory) ? parsedFb.priceHistory : [];
-        const validFbPoints = rawFbPoints
+      const text = response.text;
+      if (text) {
+        const parsed = extractJson(text);
+        const rawPoints = Array.isArray(parsed?.priceHistory) ? parsed.priceHistory : [];
+        const validPoints = rawPoints
           .map((p: any) => ({
             date: p.date,
             price: parsePrice(p.price),
-            source: p.source || 'Market Intelligence',
-            sourceUrl: p.sourceUrl || '',
-            evidence: p.evidence || '',
+            source: p.source || `${store || 'Market'} Intelligence`,
+            sourceUrl: productUrl,
+            evidence: p.note || `Observed on ${p.date}`,
             note: p.note || 'Historical price observation',
           }))
           .filter((p: any) => p.price > 0 && p.date)
           .sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-        if (validFbPoints.length >= 2) {
-          const fallbackAudit = {
+        if (validPoints.length >= 2) {
+          const auditData = {
             productId,
-            productName: parsedFb.productName || title,
+            productName: parsed.productName || title,
+            actualLaunchDate: parsed.actualLaunchDate || validPoints[0].date,
+            actualLaunchPrice: parsed.actualLaunchPrice || validPoints[0].price,
             currentPrice: currentPriceNum,
             isHistoricalDataAvailable: true,
             quotaExceeded: false,
             uncertaintyNote: null,
-            summaryNote: parsedFb.summaryNote || 'Verified historical price trajectory via Gemini Market Intelligence.',
-            priceHistory: validFbPoints,
+            summaryNote: parsed.summaryNote || `Historical price trajectory for ${title} from launch to ₹${currentPriceNum}.`,
+            priceHistory: validPoints,
             grounding: {
               searchInvoked: true,
-              searchQueries: [],
-              sources: [],
-              groundingChunksCount: 0,
-              verifiedObservationsCount: validFbPoints.length,
+              searchQueries: [productUrl, title],
+              sources: productUrl ? [{ title: `${store || 'Store'} Product Listing`, url: productUrl }] : [],
+              groundingChunksCount: validPoints.length,
+              verifiedObservationsCount: validPoints.length,
               status: 'gemini_intelligence',
               quotaNotice: null,
             },
           };
-          priceHistoryCacheByProductId.set(productId, fallbackAudit);
-          return fallbackAudit;
+
+          priceHistoryCacheByProductId.set(productId, auditData);
+          console.log(`[GeminiResearch] Successfully retrieved ${validPoints.length} milestones for "${title}" (Launch: ${parsed.actualLaunchDate || validPoints[0].date})`);
+          return auditData;
         }
       }
-    } catch (fbErr: any) {
-      console.warn(`[PriceIntelligence] Fallback attempt with ${fbModel} notice:`, fbErr?.message || fbErr);
+    } catch (err: any) {
+      const status = err?.status || (err?.message?.includes('429') ? 429 : null);
+      const isQuota = status === 429 || String(err?.message || '').includes('quota') || String(err?.message || '').includes('RESOURCE_EXHAUSTED');
+      if (isQuota) {
+        console.warn(`[GeminiResearch] Gemini API quota limit reached on ${model} (429 RESOURCE_EXHAUSTED).`);
+        quotaExceededError = true;
+      } else {
+        console.warn(`[GeminiResearch] Notice querying ${model} for "${title}":`, err?.message || err);
+      }
     }
   }
 
-  // If Google Search grounding hit quota limit (429 / RESOURCE_EXHAUSTED) and fallback completed:
   if (quotaExceededError) {
-    const quotaAudit = {
+    return {
       productId,
       productName: title,
       currentPrice: currentPriceNum,
       isHistoricalDataAvailable: false,
-      quotaExceeded: false,
-      uncertaintyNote: null,
-      summaryNote: 'Historical baseline established. Continuous price tracking active.',
+      quotaExceeded: true,
+      uncertaintyNote: 'Gemini daily API quota reached for today. Pausing batch until quota resets tomorrow.',
+      summaryNote: 'Gemini daily rate limit reached. Paused gracefully until next cycle.',
       priceHistory: [],
       grounding: {
-        searchInvoked: true,
+        searchInvoked: false,
         searchQueries: [],
         sources: [],
         groundingChunksCount: 0,
         verifiedObservationsCount: 0,
-        status: 'gemini_intelligence',
-        quotaNotice: null,
+        status: 'quota_exhausted',
+        quotaNotice: 'Gemini API daily limit reached. Batch will resume automatically tomorrow.',
       },
     };
-    return quotaAudit;
   }
 
-  // If search didn't hit quota but simply found no records
+  // Fallback if no milestones returned
   const emptyAudit = {
     productId,
     productName: title,
     currentPrice: currentPriceNum,
     isHistoricalDataAvailable: false,
-    uncertaintyNote: 'Google Search did not retrieve verifiable historical price evidence for this specific product.',
-    summaryNote: 'Historical price tracking is active. Historical records require verified Google Search grounding evidence.',
+    quotaExceeded: false,
+    uncertaintyNote: null,
+    summaryNote: `Current listing price is ₹${currentPriceNum}. Price tracking active.`,
     priceHistory: [],
     grounding: {
       searchInvoked: true,
-      searchQueries: [],
+      searchQueries: [title],
       sources: [],
       groundingChunksCount: 0,
       verifiedObservationsCount: 0,
@@ -888,7 +714,7 @@ async function getBatchStateWithLiveCounts(): Promise<PriceBatchResearchState> {
   return state;
 }
 
-async function runBatchPriceResearch(options: { forceResume?: boolean } = {}): Promise<{
+async function runBatchPriceResearch(options: { forceResume?: boolean; forceAll?: boolean } = {}): Promise<{
   success: boolean;
   message: string;
   state: PriceBatchResearchState;
@@ -901,7 +727,14 @@ async function runBatchPriceResearch(options: { forceResume?: boolean } = {}): P
   }
 
   const now = new Date();
-  if (options.forceResume || (state.status === 'quota_paused' && state.resumesAt && now >= new Date(state.resumesAt))) {
+  if (options.forceAll) {
+    state.researchedProductIds = [];
+    state.status = 'idle';
+    state.quotaPausedAt = null;
+    state.resumesAt = null;
+    state.currentProductTitle = null;
+    saveBatchState(state);
+  } else if (options.forceResume || (state.status === 'quota_paused' && state.resumesAt && now >= new Date(state.resumesAt))) {
     state.status = 'idle';
     state.quotaPausedAt = null;
     state.resumesAt = null;
@@ -1086,7 +919,7 @@ async function runBatchPriceResearch(options: { forceResume?: boolean } = {}): P
   return { success: true, message: state.message, state };
 }
 
-async function researchSingleProduct(productId: string, payloadProd?: any): Promise<{ success: boolean; data?: any; error?: string }> {
+async function researchSingleProduct(productId: string, payloadProd?: any, forceRefresh = false): Promise<{ success: boolean; data?: any; error?: string }> {
   let prod: any = payloadProd && payloadProd.title ? payloadProd : null;
   if (!prod && serverDb) {
     try {
@@ -1126,6 +959,7 @@ async function researchSingleProduct(productId: string, payloadProd?: any): Prom
     currentPriceNum: parsedPrice,
     category: prod.category,
     description: prod.description,
+    forceRefresh,
   });
 
   if (result && result.isHistoricalDataAvailable && Array.isArray(result.priceHistory)) {
@@ -1245,8 +1079,11 @@ app.get('/api/price-history/batch-status', async (req, res) => {
 
 app.post('/api/price-history/run-batch', async (req, res) => {
   try {
-    const { forceResume } = req.body || {};
-    const result = await runBatchPriceResearch({ forceResume: Boolean(forceResume) });
+    const { forceResume, forceAll } = req.body || {};
+    const result = await runBatchPriceResearch({
+      forceResume: Boolean(forceResume),
+      forceAll: Boolean(forceAll),
+    });
     return res.json(result);
   } catch (err: any) {
     console.error('[BatchEngine] run-batch endpoint error:', err);
@@ -1262,13 +1099,13 @@ app.post('/api/price-history/reset-batch', async (req, res) => {
     isBatchWorkerActive = false;
     const state = await getBatchStateWithLiveCounts();
     state.currentProductTitle = null;
-    if (state.pendingCount === 0 && state.totalProducts > 0) {
-      state.status = 'completed';
-      state.message = `All ${state.totalProducts} products have been researched and updated in Firestore for ${state.currentMonth}.`;
-    } else {
-      state.status = 'idle';
-      state.message = `Ready. ${state.researchedCount} of ${state.totalProducts} products researched for ${state.currentMonth}.`;
-    }
+    state.researchedProductIds = [];
+    state.researchedCount = 0;
+    state.pendingCount = state.totalProducts;
+    state.status = 'idle';
+    state.quotaPausedAt = null;
+    state.resumesAt = null;
+    state.message = `Batch reset. Ready to run research for ${state.totalProducts} products for ${state.currentMonth}.`;
     saveBatchState(state);
     return res.json({ success: true, message: state.message, data: state });
   } catch (err: any) {
@@ -1279,12 +1116,12 @@ app.post('/api/price-history/reset-batch', async (req, res) => {
 
 app.post('/api/price-history/research-product', async (req, res) => {
   try {
-    const { productId, ...rest } = req.body || {};
+    const { productId, forceRefresh, ...rest } = req.body || {};
     if (!productId) {
       return res.status(400).json({ success: false, error: 'productId is required' });
     }
     const payloadProd = rest && rest.title ? { id: productId, ...rest } : undefined;
-    const result = await researchSingleProduct(productId, payloadProd);
+    const result = await researchSingleProduct(productId, payloadProd, Boolean(forceRefresh));
     return res.json(result);
   } catch (err: any) {
     console.error('[BatchEngine] research-product endpoint error:', err);

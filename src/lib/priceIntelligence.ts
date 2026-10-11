@@ -1,9 +1,9 @@
 import { PriceIntelligenceData, PriceSnapshot, PriceMilestone, PriceHistoryPoint } from '../types';
 import { databaseService, getStoredPriceHistory, setStoredPriceHistory } from './firebase';
 
-const CACHE_PREFIX = 'pickasap_price_intel_v5_';
+const CACHE_PREFIX = 'pickasap_price_intel_v6_';
 
-// Proactively purge old unverified v1-v4 caches
+// Proactively purge old unverified v1-v5 caches
 export function purgeLegacyPriceCaches() {
   try {
     if (typeof window === 'undefined' || !window.localStorage) return;
@@ -16,10 +16,12 @@ export function purgeLegacyPriceCaches() {
           k.startsWith('pickasap_price_intel_v2_') ||
           k.startsWith('pickasap_price_intel_v3_') ||
           k.startsWith('pickasap_price_intel_v4_') ||
+          k.startsWith('pickasap_price_intel_v5_') ||
           k.startsWith('pickasap_price_history_v1_') ||
           k.startsWith('pickasap_price_history_v2_') ||
           k.startsWith('pickasap_price_history_v3_') ||
-          k.startsWith('pickasap_price_history_v4_'))
+          k.startsWith('pickasap_price_history_v4_') ||
+          k.startsWith('pickasap_price_history_v5_'))
       ) {
         keysToRemove.push(k);
       }

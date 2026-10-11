@@ -228,14 +228,20 @@ export const PriceIntelligenceBatchManager: React.FC<PriceIntelligenceBatchManag
     setResearchingProductId(null);
   };
 
-  const handleStartBatch = async (forceResume = false) => {
+  const handleStartBatch = async (forceResume = false, forceAll = false) => {
     setIsTriggering(true);
-    setActionNotice(forceResume ? 'Resuming batch price research...' : 'Starting monthly batch research...');
+    setActionNotice(
+      forceResume
+        ? 'Resuming batch price research...'
+        : forceAll
+        ? 'Re-running full catalog research via Gemini...'
+        : 'Starting monthly batch research...'
+    );
     try {
       const res = await fetch('/api/price-history/run-batch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ forceResume }),
+        body: JSON.stringify({ forceResume, forceAll }),
       });
       const ct = res.headers.get('content-type') || '';
       if (res.ok && ct.includes('application/json')) {
@@ -268,7 +274,17 @@ export const PriceIntelligenceBatchManager: React.FC<PriceIntelligenceBatchManag
       const res = await fetch('/api/price-history/research-product', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ productId: product.id }),
+        body: JSON.stringify({
+          productId: product.id,
+          title: product.title,
+          brand: product.brand,
+          modelIdentifier: product.modelIdentifier,
+          store: product.store,
+          currentPrice: product.currentPrice,
+          productUrl: product.productUrl || product.affiliateUrl,
+          affiliateUrl: product.affiliateUrl,
+          forceRefresh: true,
+        }),
       });
       const ct = res.headers.get('content-type') || '';
       if (res.ok && ct.includes('application/json')) {
@@ -431,7 +447,10 @@ export const PriceIntelligenceBatchManager: React.FC<PriceIntelligenceBatchManag
 
             <button
               id="start-monthly-batch-research-btn"
-              onClick={() => handleStartBatch(effectiveStatus?.status === 'quota_paused')}
+              onClick={() => {
+                const isCompleted = effectiveStatus?.status === 'completed';
+                handleStartBatch(effectiveStatus?.status === 'quota_paused', isCompleted);
+              }}
               disabled={isTriggering || (effectiveStatus?.status === 'researching' && effectiveStatus?.pendingCount > 0)}
               className="px-4 py-2.5 rounded-xl bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 hover:bg-neutral-800 dark:hover:bg-neutral-200 text-xs font-bold flex items-center gap-2 shadow-xs transition-all cursor-pointer active:scale-95 disabled:opacity-50"
               title="System runs automatically on autopilot. Use this only for immediate manual testing or override."

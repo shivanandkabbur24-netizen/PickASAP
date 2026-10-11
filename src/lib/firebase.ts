@@ -188,7 +188,7 @@ const STORAGE_PRODUCTS = 'pickasap_products_v1';
 const STORAGE_CLICKS = 'pickasap_clicks_v1';
 const STORAGE_USER = 'pickasap_current_user_v2';
 const STORAGE_FAVORITES = 'pickasap_favorites_v1';
-const STORAGE_PRICE_HISTORY_PREFIX = 'pickasap_price_history_v5_';
+const STORAGE_PRICE_HISTORY_PREFIX = 'pickasap_price_history_v6_';
 
 export const getStoredPriceHistory = (productId: string): PriceSnapshot[] => {
   // 1. Try reading stored snapshots from localStorage
@@ -222,7 +222,7 @@ export const getStoredPriceHistory = (productId: string): PriceSnapshot[] => {
 
   // 2. Check if background Gemini price intelligence has already verified authentic points
   try {
-    const intelRaw = localStorage.getItem(`pickasap_price_intel_v5_${productId}`);
+    const intelRaw = localStorage.getItem(`pickasap_price_intel_v6_${productId}`);
     if (intelRaw) {
       const intel = JSON.parse(intelRaw);
       const points = Array.isArray(intel?.priceHistory) && intel.priceHistory.length > 0
@@ -236,7 +236,7 @@ export const getStoredPriceHistory = (productId: string): PriceSnapshot[] => {
           p.note?.includes('Initial launch price point')
         );
         if (hasOldFakes) {
-          localStorage.removeItem(`pickasap_price_intel_v5_${productId}`);
+          localStorage.removeItem(`pickasap_price_intel_v6_${productId}`);
         } else {
           const converted: PriceSnapshot[] = points.map((m: any, idx: number) => ({
             id: `snap_hist_${productId}_${idx}_${new Date(m.date).getTime()}`,
@@ -660,6 +660,10 @@ export const databaseService = {
           modelIdentifier: product.modelIdentifier,
           store: product.store,
           currentPrice: product.currentPrice,
+          productUrl: product.productUrl || product.affiliateUrl,
+          affiliateUrl: product.affiliateUrl,
+          category: product.category,
+          description: product.description,
         }),
       }).catch(() => {});
     } catch {}

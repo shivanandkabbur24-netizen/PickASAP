@@ -8,3 +8,5 @@ coverage/
 .env*
 !.env.example
 bun.lock*
+.dev.*
+.aistudio/

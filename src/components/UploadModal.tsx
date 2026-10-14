@@ -15,7 +15,6 @@ import {
 } from 'lucide-react';
 import { Product, UserProfile, CategoryType, StoreType } from '../types';
 import { database as db, parsePriceToNumber } from '../lib/firebase';
-import { fetchBackgroundPriceHistory } from '../lib/priceIntelligence';
 
 interface UploadModalProps {
   user: UserProfile;

@@ -37,7 +37,11 @@ import {
   PriceSubmission, 
   SubmissionStatus, 
   ApprovalMethod, 
-  RiskLevel 
+  RiskLevel,
+  TrackingQueueItem,
+  TrackingStatus,
+  HistoricalPriceObservation,
+  CsvImportResult
 } from '../types';
 import initialProductsRaw from '../data/initialProducts.json';
 
@@ -189,6 +193,54 @@ const STORAGE_CLICKS = 'pickasap_clicks_v1';
 const STORAGE_USER = 'pickasap_current_user_v2';
 const STORAGE_FAVORITES = 'pickasap_favorites_v1';
 const STORAGE_PRICE_HISTORY_PREFIX = 'pickasap_price_history_v6_';
+const STORAGE_TRACKING_QUEUE = 'pickasap_tracking_queue_v1';
+
+export const getStoredTrackingQueue = (): TrackingQueueItem[] => {
+  try {
+    const raw = localStorage.getItem(STORAGE_TRACKING_QUEUE);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+  } catch (e) {
+    console.warn('Tracking queue storage read notice:', e);
+  }
+
+  // Auto-initialize queue from products if not yet saved
+  const prods = getStoredProducts();
+  const initialQueue: TrackingQueueItem[] = prods.map((p) => {
+    const hasHistory = Array.isArray(p.priceHistory) && p.priceHistory.length > 0;
+    return {
+      id: p.id,
+      productId: p.id,
+      productName: p.title,
+      officialProductUrl: p.productUrl || p.affiliateUrl || '',
+      marketplace: p.marketplace || p.store || 'Amazon',
+      exactModelVariant: p.modelIdentifier || p.brand || 'Standard Variant',
+      trackingStatus: hasHistory ? 'imported' : 'pending',
+      lastProcessedAt: p.lastUpdated || p.createdAt || new Date().toISOString(),
+      reviewNotes: hasHistory ? 'Verified catalog price data calibrated' : 'Awaiting historical data import',
+      errorDetails: '',
+      createdAt: p.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+  });
+  setStoredTrackingQueue(initialQueue);
+  return initialQueue;
+};
+
+export const setStoredTrackingQueue = (items: TrackingQueueItem[]) => {
+  try {
+    localStorage.setItem(STORAGE_TRACKING_QUEUE, JSON.stringify(items));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('pickasap:tracking_queue_updated', { detail: items }));
+    }
+  } catch (e) {
+    console.warn('Tracking queue storage write notice:', e);
+  }
+};
 
 export const getStoredPriceHistory = (productId: string): PriceSnapshot[] => {
   // 1. Try reading stored snapshots from localStorage
@@ -201,6 +253,7 @@ export const getStoredPriceHistory = (productId: string): PriceSnapshot[] => {
         const hasLegacyGenericFake = list.some((s: PriceSnapshot) =>
           s.id && (
             s.id.startsWith('snap_intel_') ||
+            s.source === 'background_intelligence' ||
             s.note?.includes('Recent weekend price point') ||
             s.note?.includes('Mid-season promotional pricing') ||
             s.note?.includes('Standard retail pricing prior to mid-year sales') ||
@@ -261,9 +314,39 @@ export const getStoredPriceHistory = (productId: string): PriceSnapshot[] => {
     console.warn('Intelligence storage read notice:', e);
   }
 
-  // 3. Return verified baseline snapshot from initial product listing (anchored to today's date)
+  // 3. Check if product itself has authentic verified priceHistory (bundled in initialProducts.json)
   const products = getStoredProducts();
   const product = products.find((p) => p.id === productId);
+  if (product && Array.isArray(product.priceHistory) && product.priceHistory.length > 0) {
+    const converted: PriceSnapshot[] = product.priceHistory
+      .filter((m: any) => m && (typeof m.price === 'number' || m.price) && m.date)
+      .map((m: any, idx: number) => {
+        const dateObj = new Date(m.date);
+        const timeStamp = isNaN(dateObj.getTime()) ? idx * 86400000 : dateObj.getTime();
+        const isoRecorded = isNaN(dateObj.getTime()) ? new Date().toISOString() : dateObj.toISOString();
+        return {
+          id: `snap_hist_${productId}_${idx}_${timeStamp}`,
+          productId,
+          price: typeof m.price === 'number' ? m.price : parsePriceToNumber(m.price),
+          recordedAt: isoRecorded,
+          source: m.source || 'Verified Archive',
+          sourceUrl: m.sourceUrl || product.productUrl || product.affiliateUrl,
+          evidence: m.evidence,
+          note: m.note || 'Recorded verified price',
+          dropPercentage: m.dropPercentage,
+          isLowest: m.isLowest,
+          isHighest: m.isHighest,
+        };
+      });
+
+    if (converted.length > 0) {
+      converted.sort((a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime());
+      setStoredPriceHistory(productId, converted);
+      return converted;
+    }
+  }
+
+  // 4. Return verified baseline snapshot from initial product listing (anchored to today's date)
   if (product) {
     const current = product.currentPrice ?? parsePriceToNumber(product.price);
     if (current > 0) {
@@ -680,9 +763,12 @@ export const databaseService = {
       const snapshot = await getDocs(q);
       const items: PriceSnapshot[] = [];
       snapshot.forEach((docSnap) => {
-        const data = docSnap.data() as PriceSnapshot;
-        if (data && typeof data.price === 'number') {
-          items.push(data);
+        const raw = docSnap.data() as PriceSnapshot;
+        if (raw && typeof raw.price === 'number') {
+          items.push({
+            ...raw,
+            id: raw.id || docSnap.id,
+          });
         }
       });
       if (items.length > 0) {
@@ -749,16 +835,25 @@ export const databaseService = {
       (snapshot) => {
         const items: PriceSnapshot[] = [];
         snapshot.forEach((docSnap) => {
-          const data = docSnap.data() as PriceSnapshot;
-          if (data && typeof data.price === 'number') {
-            items.push(data);
+          const raw = docSnap.data() as PriceSnapshot;
+          if (raw && typeof raw.price === 'number') {
+            items.push({
+              ...raw,
+              id: raw.id || docSnap.id,
+            });
           }
         });
         if (items.length > 0) {
           items.sort((a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime());
           const forThisProduct = items.filter((s) => !s.productId || s.productId === productId);
-          setStoredPriceHistory(productId, forThisProduct);
-          onData(forThisProduct);
+          const currentStored = getStoredPriceHistory(productId);
+          // If Firestore has multiple points, use them. If Firestore only has <= 1 point but local storage/product baseline has multiple verified points, preserve the richer dataset!
+          if (forThisProduct.length > 1 || currentStored.length <= 1) {
+            setStoredPriceHistory(productId, forThisProduct);
+            onData(forThisProduct);
+          } else {
+            onData(currentStored);
+          }
         } else {
           // If Firestore has no snapshots recorded yet for this product, serve local product baseline
           const fallbackSnaps = getStoredPriceHistory(productId);
@@ -826,6 +921,244 @@ export const databaseService = {
     } catch (err) {
       console.warn('Firestore price history batch write notice:', err);
     }
+  },
+
+  // ------------------------------------------------------------------
+  // Product Tracking Queue & Historical CSV Import System
+  // ------------------------------------------------------------------
+
+  async getTrackingQueue(): Promise<TrackingQueueItem[]> {
+    const cached = getStoredTrackingQueue();
+    try {
+      const qSnap = await getDocs(collection(db, 'trackingQueue'));
+      const items: TrackingQueueItem[] = [];
+      qSnap.forEach((docSnap) => {
+        const data = docSnap.data() as TrackingQueueItem;
+        if (data && data.productId) {
+          items.push({
+            ...data,
+            id: data.id || docSnap.id,
+          });
+        }
+      });
+      if (items.length > 0) {
+        const map = new Map<string, TrackingQueueItem>();
+        items.forEach((it) => map.set(it.productId, it));
+        cached.forEach((c) => {
+          if (!map.has(c.productId)) {
+            map.set(c.productId, c);
+          }
+        });
+        const merged = Array.from(map.values());
+        setStoredTrackingQueue(merged);
+        return merged;
+      }
+    } catch (err) {
+      console.warn('Firestore getTrackingQueue notice, using local cache:', err);
+    }
+    return cached;
+  },
+
+  async saveTrackingQueueItem(item: TrackingQueueItem): Promise<TrackingQueueItem> {
+    const cleanItem = sanitizeFirestoreData({
+      ...item,
+      updatedAt: new Date().toISOString(),
+    }) as TrackingQueueItem;
+
+    const current = getStoredTrackingQueue();
+    const updated = current.map((q) => (q.id === item.id || q.productId === item.productId ? cleanItem : q));
+    if (!updated.some((q) => q.id === item.id || q.productId === item.productId)) {
+      updated.push(cleanItem);
+    }
+    setStoredTrackingQueue(updated);
+
+    try {
+      await setDoc(doc(db, 'trackingQueue', item.id || item.productId), cleanItem);
+    } catch (err) {
+      console.warn('Firestore saveTrackingQueueItem notice:', err);
+    }
+
+    return cleanItem;
+  },
+
+  async updateTrackingQueueStatus(
+    productIdOrId: string,
+    status: TrackingStatus,
+    reviewNotes?: string,
+    errorDetails?: string
+  ): Promise<void> {
+    const current = getStoredTrackingQueue();
+    const item = current.find((q) => q.id === productIdOrId || q.productId === productIdOrId);
+    if (!item) return;
+
+    const updatedItem: TrackingQueueItem = {
+      ...item,
+      trackingStatus: status,
+      lastProcessedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      ...(reviewNotes !== undefined ? { reviewNotes } : {}),
+      ...(errorDetails !== undefined ? { errorDetails } : {}),
+    };
+
+    await this.saveTrackingQueueItem(updatedItem);
+  },
+
+  subscribeToTrackingQueue(callback: (items: TrackingQueueItem[]) => void): () => void {
+    let unsubscribed = false;
+    try {
+      const unsubscribe = onSnapshot(collection(db, 'trackingQueue'), (snapshot) => {
+        if (unsubscribed) return;
+        const items: TrackingQueueItem[] = [];
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data() as TrackingQueueItem;
+          if (data && data.productId) {
+            items.push({ ...data, id: data.id || docSnap.id });
+          }
+        });
+        if (items.length > 0) {
+          setStoredTrackingQueue(items);
+          callback(items);
+        } else {
+          callback(getStoredTrackingQueue());
+        }
+      }, (error) => {
+        console.warn('Tracking queue onSnapshot error (using cache):', error);
+        callback(getStoredTrackingQueue());
+      });
+      return () => {
+        unsubscribed = true;
+        unsubscribe();
+      };
+    } catch {
+      callback(getStoredTrackingQueue());
+      return () => { unsubscribed = true; };
+    }
+  },
+
+  async deleteTrackingQueueItem(id: string): Promise<void> {
+    const current = getStoredTrackingQueue();
+    const filtered = current.filter((q) => q.id !== id && q.productId !== id);
+    setStoredTrackingQueue(filtered);
+    try {
+      await deleteDoc(doc(db, 'trackingQueue', id));
+    } catch (err) {
+      console.warn('Firestore deleteTrackingQueueItem notice:', err);
+    }
+  },
+
+  async importHistoricalObservation(obs: HistoricalPriceObservation): Promise<PriceSnapshot> {
+    const rawDate = new Date(obs.observation_date);
+    const validDate = isNaN(rawDate.getTime()) ? new Date() : rawDate;
+    const dateIso = validDate.toISOString();
+    const dateKey = dateIso.split('T')[0].replace(/[^0-9]/g, '');
+    const cleanSource = (obs.source_name || 'import').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 20);
+    // Deterministic ID ensures idempotency
+    const docId = `obs_${obs.product_id}_${dateKey}_${Math.round(obs.price)}_${cleanSource}`;
+
+    const snapshot: PriceSnapshot = {
+      id: docId,
+      productId: obs.product_id,
+      price: obs.price,
+      recordedAt: dateIso,
+      source: obs.source_name,
+      sourceUrl: obs.source_url,
+      sourceObservedAt: obs.source_observed_at,
+      currency: obs.currency || 'INR',
+      verificationMethod: obs.verification_method || 'manual_receipt',
+      reviewStatus: obs.review_status || 'approved',
+      isManual: obs.is_manual ?? true,
+      note: `Verified observation (${obs.verification_method}): ${obs.source_name}`,
+    };
+
+    // Save to Firestore
+    const cleanSnap = sanitizeFirestoreData(snapshot);
+    await setDoc(doc(db, `products/${obs.product_id}/priceHistory`, docId), cleanSnap);
+
+    // Update local cache
+    const existing = getStoredPriceHistory(obs.product_id);
+    const filtered = existing.filter((s) => s.id !== docId);
+    filtered.push(snapshot);
+    filtered.sort((a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime());
+    setStoredPriceHistory(obs.product_id, filtered);
+
+    // Notify listeners
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('pickasap:price_snapshot_added', {
+          detail: { productId: obs.product_id, snapshot, snapshots: filtered },
+        })
+      );
+    }
+
+    // Update tracking queue item
+    await this.updateTrackingQueueStatus(
+      obs.product_id,
+      'imported',
+      `Imported observation for ${dateIso.split('T')[0]} at ₹${obs.price}`,
+      ''
+    );
+
+    return snapshot;
+  },
+
+  async importHistoricalObservationsBatch(
+    observations: HistoricalPriceObservation[]
+  ): Promise<CsvImportResult> {
+    let successful = 0;
+    let skipped = 0;
+    let rejected = 0;
+    const errors: string[] = [];
+    const importedRecords: PriceSnapshot[] = [];
+
+    const products = getStoredProducts();
+    const productIds = new Set(products.map((p) => p.id));
+
+    for (let i = 0; i < observations.length; i++) {
+      const obs = observations[i];
+      if (!obs.product_id || !productIds.has(obs.product_id)) {
+        rejected++;
+        errors.push(`Row ${i + 1}: Unknown product ID '${obs.product_id}'`);
+        continue;
+      }
+      if (typeof obs.price !== 'number' || isNaN(obs.price) || obs.price <= 0) {
+        rejected++;
+        errors.push(`Row ${i + 1}: Invalid price '${obs.price}' for product ${obs.product_id}`);
+        continue;
+      }
+      const obsDate = new Date(obs.observation_date);
+      if (isNaN(obsDate.getTime())) {
+        rejected++;
+        errors.push(`Row ${i + 1}: Invalid date '${obs.observation_date}'`);
+        continue;
+      }
+
+      try {
+        const snap = await this.importHistoricalObservation(obs);
+        successful++;
+        importedRecords.push(snap);
+      } catch (err: any) {
+        rejected++;
+        errors.push(`Row ${i + 1}: Import error: ${err?.message || err}`);
+      }
+    }
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('pickasap:historical_import_completed', {
+          detail: { successful, skipped, rejected, importedRecords },
+        })
+      );
+    }
+
+    return {
+      totalSubmitted: observations.length,
+      successful,
+      skipped,
+      rejected,
+      importedRecords,
+      errors,
+      timestamp: new Date().toISOString(),
+    };
   },
 
   // Administrator price and offer update

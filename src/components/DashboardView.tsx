@@ -27,14 +27,16 @@ import {
   RefreshCw,
   RotateCcw,
   Zap,
+  Upload,
 } from 'lucide-react';
 import { Product, ClickRecord, UserProfile, PriceSubmission } from '../types';
-import { database as db } from '../lib/firebase';
+import { database as db, getStoredTrackingQueue } from '../lib/firebase';
 import { AdminPriceUpdateModal } from './AdminPriceUpdateModal';
 import { PriceSubmissionsManager } from './PriceSubmissionsManager';
 import { TrustedUsersManager } from './TrustedUsersManager';
 import { PlatformFeeModal } from './PlatformFeeModal';
-import { PriceIntelligenceBatchManager } from './PriceIntelligenceBatchManager';
+import { ProductTrackingQueue } from './ProductTrackingQueue';
+import { HistoricalPriceImportModal } from './HistoricalPriceImportModal';
 import {
   getRevenueTier,
   getCurrentMonthKey,
@@ -72,14 +74,32 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     user.email?.toLowerCase().trim() === 'shivanandkabbur24@gmail.com' ||
     user.email?.toLowerCase().includes('admin');
 
-  const [activeTab, setActiveTab] = useState<'catalog' | 'clicks' | 'submissions' | 'contributors' | 'price-intelligence'>('catalog');
+  const [activeTab, setActiveTab] = useState<'catalog' | 'clicks' | 'submissions' | 'contributors' | 'tracking-queue'>('catalog');
   const [selectedMonthKey, setSelectedMonthKey] = useState<string>(() => getCurrentMonthKey());
   const [currentUserState, setCurrentUserState] = useState<UserProfile>(user);
   const [isPlatformFeeModalOpen, setIsPlatformFeeModalOpen] = useState(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [selectedProductForImport, setSelectedProductForImport] = useState<string | undefined>(undefined);
+  const [queueUnfinishedCount, setQueueUnfinishedCount] = useState<number>(() => {
+    const q = getStoredTrackingQueue();
+    return q.filter((it) => ['pending', 'in_review', 'needs_review'].includes(it.trackingStatus)).length;
+  });
 
   useEffect(() => {
     setCurrentUserState(user);
   }, [user]);
+
+  // Subscribe to tracking queue updates
+  useEffect(() => {
+    const unsub = db.subscribeToTrackingQueue((items) => {
+      setQueueUnfinishedCount(
+        items.filter((it) => ['pending', 'in_review', 'needs_review'].includes(it.trackingStatus)).length
+      );
+    });
+    return () => {
+      if (typeof unsub === 'function') unsub();
+    };
+  }, []);
 
   const [clicks, setClicks] = useState<ClickRecord[]>(() => db.getStoredClicks());
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -94,7 +114,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   // If a non-owner user attempts to switch to restricted tabs, force back to catalog
   useEffect(() => {
-    if (!isOwnerAdmin && (activeTab === 'submissions' || activeTab === 'contributors' || activeTab === 'price-intelligence')) {
+    if (
+      !isOwnerAdmin &&
+      (activeTab === 'submissions' ||
+        activeTab === 'contributors' ||
+        activeTab === 'tracking-queue')
+    ) {
       setActiveTab('catalog');
     }
   }, [isOwnerAdmin, activeTab]);
@@ -415,19 +440,40 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </button>
         )}
 
-        {/* Monthly Price Intelligence: Visible to Owner Admin */}
+        {/* Tab 4: Product Tracking Queue: Visible to Owner Admin */}
         {isOwnerAdmin && (
           <button
-            id="dashboard-tab-price-intelligence"
-            onClick={() => setActiveTab('price-intelligence')}
+            id="dashboard-tab-tracking-queue"
+            onClick={() => setActiveTab('tracking-queue')}
             className={`pb-3 px-4 text-xs sm:text-sm font-semibold flex items-center gap-2 border-b-2 transition-colors whitespace-nowrap cursor-pointer ${
-              activeTab === 'price-intelligence'
+              activeTab === 'tracking-queue'
                 ? 'border-[#FF6E40] text-[#FF6E40]'
                 : 'border-transparent text-neutral-500 hover:text-neutral-900 dark:hover:text-white'
             }`}
           >
-            <RotateCcw className="w-4 h-4" />
-            <span>Price Intelligence &amp; Quota</span>
+            <Layers className="w-4 h-4" />
+            <span>Product Tracking Queue</span>
+            {queueUnfinishedCount > 0 && (
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#FF6E40] text-white">
+                {queueUnfinishedCount}
+              </span>
+            )}
+          </button>
+        )}
+
+        {/* Quick CSV Import Action Button */}
+        {isOwnerAdmin && (
+          <button
+            id="dashboard-tab-price-import-btn"
+            onClick={() => {
+              setSelectedProductForImport(undefined);
+              setIsImportModalOpen(true);
+            }}
+            className="pb-3 px-3 text-xs sm:text-sm font-semibold flex items-center gap-1.5 border-b-2 border-transparent text-neutral-500 hover:text-[#FF6E40] dark:hover:text-[#FF6E40] transition-colors whitespace-nowrap cursor-pointer ml-auto"
+            title="Import historical price observation CSV"
+          >
+            <Upload className="w-3.5 h-3.5 text-[#FF6E40]" />
+            <span>CSV Price Import</span>
           </button>
         )}
       </div>
@@ -1110,12 +1156,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <TrustedUsersManager currentUser={user} />
       )}
 
-      {/* Tab 4: Monthly Price Intelligence & Batch Search Manager (Only visible to Owner Admin) */}
-      {isOwnerAdmin && activeTab === 'price-intelligence' && (
-        <PriceIntelligenceBatchManager
+      {/* Tab 4: Product Tracking Queue (Admin Only) */}
+      {isOwnerAdmin && activeTab === 'tracking-queue' && (
+        <ProductTrackingQueue
+          user={user}
           products={products}
-          onProductUpdated={onProductUpdated}
-          onSelectProduct={onSelectProduct}
+          onOpenImportForProduct={(prodId) => {
+            setSelectedProductForImport(prodId);
+            setIsImportModalOpen(true);
+          }}
+          onOpenDirectCsvImport={() => {
+            setSelectedProductForImport(undefined);
+            setIsImportModalOpen(true);
+          }}
         />
       )}
 
@@ -1248,6 +1301,23 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           onOpenUploadModal();
         }}
       />
+
+      {/* Historical Price CSV Import Modal */}
+      {isImportModalOpen && (
+        <HistoricalPriceImportModal
+          isOpen={isImportModalOpen}
+          onClose={() => {
+            setIsImportModalOpen(false);
+            setSelectedProductForImport(undefined);
+          }}
+          user={currentUserState}
+          products={products}
+          preselectedProductId={selectedProductForImport}
+          onImportComplete={(report) => {
+            console.log('[Dashboard] Price import completed:', report);
+          }}
+        />
+      )}
     </div>
   );
 };

@@ -67,14 +67,39 @@ export function generateClientPriceHistory(product: {
       ? product.currentPrice
       : parseNum(product.price) || 0;
 
+  // Helper to format currency
   const formatPrice = (p: number) => `${currency}${p.toLocaleString('en-IN')}`;
 
-  // If the product has authentic sourced history points
+  // 1. Check if the product has authentic sourced history points
+  let candidatePoints: any[] = [];
   if (Array.isArray(product.priceHistory) && product.priceHistory.length > 0) {
+    candidatePoints = product.priceHistory;
+  } else {
+    // Check if stored snapshots exist for this product
+    try {
+      const stored = getStoredPriceHistory(product.id);
+      if (Array.isArray(stored) && stored.length > 1) {
+        candidatePoints = stored.map((s) => ({
+          date: (s.recordedAt || '').split('T')[0],
+          price: s.price,
+          source: s.source || 'Verified Archive',
+          sourceUrl: s.sourceUrl,
+          evidence: s.evidence,
+          note: s.note,
+          dropPercentage: s.dropPercentage,
+          isLowest: s.isLowest,
+          isHighest: s.isHighest,
+        }));
+      }
+    } catch {}
+  }
+
+  if (candidatePoints.length > 0) {
     const todayIso = new Date().toISOString();
     const todayDateStr = todayIso.split('T')[0];
 
-    let points = [...product.priceHistory]
+    let points = [...candidatePoints]
+      .filter((p) => p && p.price > 0 && p.date)
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
     // Ensure the points reach till today's date
@@ -120,6 +145,7 @@ export function generateClientPriceHistory(product: {
           formattedPrice: formatPrice(p.price),
           source: p.source,
           sourceUrl: p.sourceUrl,
+          evidence: p.evidence,
           note: p.note || 'Verified historical observation',
           dropPercentage: high > p.price ? `${Math.round(((high - p.price) / high) * 100)}% drop` : undefined,
           isLowest: p.price === low,
@@ -313,7 +339,7 @@ export async function fetchBackgroundPriceHistory(product: {
     // Gracefully handle network timeouts or offline mode
   }
 
-  // 4. If API returned data with historical points, use it; otherwise fallback to cached or independent baseline
+  // 4. If API returned data with historical points, use it; otherwise fallback to cached or product/stored history
   const hasValidFetched = Boolean(
     fetchedData && fetchedData.isHistoricalDataAvailable && Array.isArray(fetchedData.priceHistory) && fetchedData.priceHistory.length > 0
   );
@@ -321,23 +347,27 @@ export async function fetchBackgroundPriceHistory(product: {
     cachedIntel && cachedIntel.isHistoricalDataAvailable && Array.isArray(cachedIntel.priceHistory) && cachedIntel.priceHistory.length > 0
   );
 
-  const intelData: PriceIntelligenceData = hasValidFetched
-    ? fetchedData!
-    : hasValidCached
-      ? cachedIntel!
-      : generateClientPriceHistory(product);
+  let intelData: PriceIntelligenceData;
+  if (hasValidFetched) {
+    intelData = fetchedData!;
+  } else if (hasValidCached) {
+    intelData = cachedIntel!;
+  } else {
+    intelData = generateClientPriceHistory(product);
+  }
 
-  // Cache the intelligence strictly under this product ID
-  saveCachedPriceIntelligence(product.id, intelData);
-  syncHistoryToSnapshots(intelData);
+  // Only cache and broadcast if we have meaningful data or if no prior valid cache exists
+  if (intelData.isHistoricalDataAvailable || !hasValidCached) {
+    saveCachedPriceIntelligence(product.id, intelData);
+    syncHistoryToSnapshots(intelData);
 
-  // Broadcast intelligence update
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(
-      new CustomEvent('pickasap:price_intel_updated', {
-        detail: { productId: product.id, intelligence: intelData },
-      })
-    );
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('pickasap:price_intel_updated', {
+          detail: { productId: product.id, intelligence: intelData },
+        })
+      );
+    }
   }
 
   return intelData;

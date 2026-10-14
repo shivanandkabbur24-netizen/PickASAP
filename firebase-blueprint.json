@@ -375,6 +375,76 @@
         "name",
         "role"
       ]
+    },
+    "TrackingQueueItem": {
+      "title": "TrackingQueueItem",
+      "description": "Product tracking workflow queue item for historical price monitoring",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the queue item",
+          "maxLength": 128
+        },
+        "productId": {
+          "type": "string",
+          "description": "Catalog product ID",
+          "maxLength": 128
+        },
+        "productName": {
+          "type": "string",
+          "description": "Product title or description",
+          "maxLength": 250
+        },
+        "officialProductUrl": {
+          "type": "string",
+          "description": "Direct official product or affiliate URL",
+          "maxLength": 3000
+        },
+        "marketplace": {
+          "type": "string",
+          "description": "Source e-commerce merchant or platform",
+          "maxLength": 100
+        },
+        "exactModelVariant": {
+          "type": "string",
+          "description": "Specific model, SKU, or color variant",
+          "maxLength": 200
+        },
+        "trackingStatus": {
+          "type": "string",
+          "description": "Workflow review and tracking status",
+          "enum": ["pending", "in_review", "approved", "imported", "needs_review", "unavailable"]
+        },
+        "lastProcessedAt": {
+          "type": "string",
+          "description": "ISO timestamp of most recent queue action"
+        },
+        "reviewNotes": {
+          "type": "string",
+          "description": "Editorial or auditor review comments",
+          "maxLength": 2000
+        },
+        "errorDetails": {
+          "type": "string",
+          "description": "Divergence or issue details requiring review",
+          "maxLength": 2000
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO timestamp of creation"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO timestamp of last update"
+        }
+      },
+      "required": [
+        "id",
+        "productId",
+        "productName",
+        "trackingStatus"
+      ]
     }
   },
   "firestore": {
@@ -407,6 +477,12 @@
         "$ref": "#/entities/ClickRecord"
       },
       "description": "Real-time affiliate link click telemetry"
+    },
+    "/trackingQueue/{queueItemId}": {
+      "schema": {
+        "$ref": "#/entities/TrackingQueueItem"
+      },
+      "description": "Semi-automatic price tracking workflow queue"
     }
   }
 }

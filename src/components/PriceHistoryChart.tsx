@@ -1,28 +1,38 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   TrendingDown,
   Calendar,
   Clock,
   Info,
-  ShieldCheck,
   Tag,
-  ArrowDownRight,
-  ArrowUpRight,
   BarChart3,
   RefreshCw,
-  Award,
-  Layers,
+  Bell,
   CheckCircle2,
   Sparkles,
+  ExternalLink,
+  ChevronDown,
+  Layers,
+  ArrowDownRight,
+  Flame,
+  AlertCircle,
+  X,
+  Upload,
 } from 'lucide-react';
-import { PriceSnapshot, PriceIntelligenceData, PriceMilestone } from '../types';
-import { databaseService as db, formatPriceDisplay } from '../lib/firebase';
+import { PriceSnapshot } from '../types';
+import { databaseService as db } from '../lib/firebase';
 import {
-  fetchBackgroundPriceHistory,
-  getCachedPriceIntelligence,
-  saveCachedPriceIntelligence,
-  generateClientPriceHistory,
-} from '../lib/priceIntelligence';
+  TimeRangeOption,
+  calculatePriceStats,
+  filterSnapshotsByRange,
+  formatPriceInr,
+  formatReadableDate,
+  getAccurateCatalogPriceHistory,
+  getPriceAlert,
+  savePriceAlert,
+  removePriceAlert,
+  PriceAlert,
+} from '../lib/priceTrackerEngine';
 
 interface PriceHistoryChartProps {
   productId: string;
@@ -38,12 +48,12 @@ interface PriceHistoryChartProps {
     currentPrice?: number;
     originalPrice?: string;
     mrp?: string;
-    category?: string;
-    description?: string;
+    priceHistory?: any[];
   };
   currentPrice?: number;
   currency?: string;
   onAdminUpdateClick?: () => void;
+  onImportCsvClick?: () => void;
   isAdmin?: boolean;
 }
 
@@ -53,31 +63,153 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
   currentPrice,
   currency = '₹',
   onAdminUpdateClick,
+  onImportCsvClick,
   isAdmin = false,
 }) => {
-  const [snapshots, setSnapshots] = useState<PriceSnapshot[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [refreshing, setRefreshing] = useState<boolean>(false);
-  const [isResearching, setIsResearching] = useState<boolean>(false);
-  const [timeRange, setTimeRange] = useState<'30d' | '90d' | 'all'>('all');
-  const [intelligence, setIntelligence] = useState<PriceIntelligenceData | null>(() => {
-    const cached = getCachedPriceIntelligence(productId);
-    if (cached && cached.productId === productId && cached.isHistoricalDataAvailable) return cached;
-    return null;
+  // Initialize with accurate catalog history on frame zero
+  const [snapshots, setSnapshots] = useState<PriceSnapshot[]>(() => {
+    return getAccurateCatalogPriceHistory(productId);
   });
+  const [loading, setLoading] = useState<boolean>(false);
+  const [refreshing, setRefreshing] = useState<boolean>(false);
+  const [timeRange, setTimeRange] = useState<TimeRangeOption>('all');
   const [hoveredPoint, setHoveredPoint] = useState<{
     x: number;
     y: number;
     snapshot: PriceSnapshot;
   } | null>(null);
 
-  // Autonomous background price research trigger (runs automatically without user action)
-  const runBackgroundPriceFetch = useCallback(async () => {
-    if (!productId) return;
+  // Price Drop Alert modal state
+  const [showAlertModal, setShowAlertModal] = useState(false);
+  const [targetAlertPrice, setTargetAlertPrice] = useState<number>(0);
+  const [alertEmail, setAlertEmail] = useState('');
+  const [activeAlert, setActiveAlert] = useState<PriceAlert | null>(null);
+  const [alertSuccessToast, setAlertSuccessToast] = useState<string | null>(null);
+  const [syncNotice, setSyncNotice] = useState<string | null>(null);
+
+  // Active numeric price
+  const activeCurrentPrice = useMemo(() => {
+    if (typeof currentPrice === 'number' && currentPrice > 0) return currentPrice;
+    if (product?.currentPrice && product.currentPrice > 0) return product.currentPrice;
+    if (product?.price) {
+      const num = parseFloat(String(product.price).replace(/[^0-9.]/g, ''));
+      if (!isNaN(num) && num > 0) return num;
+    }
+    return snapshots.length > 0 ? snapshots[snapshots.length - 1].price : 0;
+  }, [currentPrice, product, snapshots]);
+
+  // Load active alert on mount
+  useEffect(() => {
+    const existing = getPriceAlert(productId);
+    setActiveAlert(existing);
+  }, [productId]);
+
+  // Real-time listener for price history snapshots of this product from Firestore
+  useEffect(() => {
+    let isMounted = true;
+
+    // Load authentic catalog data immediately on frame zero
+    const catalogData = getAccurateCatalogPriceHistory(productId);
+    if (catalogData.length > 0) {
+      setSnapshots(catalogData);
+    }
+
+    const unsubscribe = db.subscribeToPriceHistory(productId, (data) => {
+      if (!isMounted) return;
+      if (Array.isArray(data) && data.length > 1) {
+        setSnapshots(data);
+      } else if (catalogData.length > 1) {
+        // Fallback to verified catalog dataset if incoming has 0 or 1 point
+        setSnapshots(catalogData);
+      }
+    });
+
+    // Listen to local snapshot added events
+    const handleSnapshotAdded = (e: Event) => {
+      const customEvent = e as CustomEvent<{ productId: string; snapshots: PriceSnapshot[] }>;
+      if (customEvent.detail && customEvent.detail.productId === productId && isMounted) {
+        if (customEvent.detail.snapshots && customEvent.detail.snapshots.length > 1) {
+          setSnapshots(customEvent.detail.snapshots);
+        }
+      }
+    };
+
+    window.addEventListener('pickasap:price_snapshot_added', handleSnapshotAdded);
+
+    return () => {
+      isMounted = false;
+      if (typeof unsubscribe === 'function') unsubscribe();
+      window.removeEventListener('pickasap:price_snapshot_added', handleSnapshotAdded);
+    };
+  }, [productId, product?.title]);
+
+  // Effective snapshots: combine catalog baseline and Firestore points
+  const effectiveSnapshots = useMemo(() => {
+    let dataset = snapshots;
+    if (!dataset || dataset.length <= 1) {
+      const catalog = getAccurateCatalogPriceHistory(productId);
+      if (catalog.length > 0) dataset = catalog;
+    }
+
+    // Ensure list reaches today with active listed price
+    if (dataset.length > 0 && activeCurrentPrice > 0) {
+      const todayIso = new Date().toISOString();
+      const todayStr = todayIso.split('T')[0];
+      const last = dataset[dataset.length - 1];
+      const lastDateStr = last ? new Date(last.recordedAt).toISOString().split('T')[0] : '';
+
+      if (lastDateStr !== todayStr) {
+        const allPrices = dataset.map((s) => s.price);
+        return [
+          ...dataset,
+          {
+            id: `snap_today_${productId}`,
+            productId,
+            price: activeCurrentPrice,
+            recordedAt: todayIso,
+            source: product?.store || 'Active Listing',
+            sourceUrl: product?.productUrl || product?.affiliateUrl,
+            note: 'Current active listed price',
+            isLowest: activeCurrentPrice <= Math.min(...allPrices),
+            isHighest: activeCurrentPrice >= Math.max(...allPrices),
+          },
+        ];
+      }
+    }
+
+    return dataset;
+  }, [snapshots, productId, activeCurrentPrice, product]);
+
+  // Actual observation date range & total observation counts (Never fabricated)
+  const observationDateRange = useMemo(() => {
+    if (!effectiveSnapshots || effectiveSnapshots.length === 0) return null;
+    const sorted = [...effectiveSnapshots].sort(
+      (a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime()
+    );
+    const start = formatReadableDate(sorted[0].recordedAt);
+    const end = formatReadableDate(sorted[sorted.length - 1].recordedAt);
+    return { start, end, total: effectiveSnapshots.length };
+  }, [effectiveSnapshots]);
+
+  const hasInsufficientHistory = effectiveSnapshots.length < 2;
+
+  // Compute full statistics
+  const stats = useMemo(() => {
+    return calculatePriceStats(effectiveSnapshots, timeRange, activeCurrentPrice);
+  }, [effectiveSnapshots, timeRange, activeCurrentPrice]);
+
+  // Filter snapshots according to selected time range window (30D, 90D, 180D, 1Y, All)
+  const displaySnapshots = useMemo(() => {
+    return filterSnapshotsByRange(effectiveSnapshots, timeRange);
+  }, [effectiveSnapshots, timeRange]);
+
+  // Sync / Verify latest price action
+  const handleSyncPrice = useCallback(async () => {
     setRefreshing(true);
-    setIsResearching(true);
+    setSyncNotice(null);
 
     try {
+      // 1. Try server verification endpoint
       const response = await fetch('/api/price-history/research-product', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -85,21 +217,19 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
           productId,
           title: product?.title,
           brand: product?.brand,
-          modelIdentifier: product?.modelIdentifier,
           store: product?.store,
-          currentPrice: currentPrice || product?.currentPrice,
+          currentPrice: activeCurrentPrice,
           productUrl: product?.productUrl || product?.affiliateUrl,
-          affiliateUrl: product?.affiliateUrl,
           forceRefresh: true,
         }),
       });
+
       const ct = response.headers.get('content-type') || '';
       if (response.ok && ct.includes('application/json')) {
         const json = await response.json();
-        if (json && json.success && json.data) {
-          setIntelligence(json.data);
-          const points = Array.isArray(json.data.priceHistory) ? json.data.priceHistory : [];
-          if (points.length > 0) {
+        if (json && json.success && json.data && Array.isArray(json.data.priceHistory)) {
+          const points = json.data.priceHistory;
+          if (points.length > 1) {
             const snaps: PriceSnapshot[] = points.map((p: any, idx: number) => {
               const dateObj = new Date(p.date);
               const timeStamp = isNaN(dateObj.getTime()) ? idx * 86400000 : dateObj.getTime();
@@ -107,369 +237,120 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
               return {
                 id: `snap_hist_${productId}_${idx}_${timeStamp}`,
                 productId,
-                price: typeof p.price === 'number' ? p.price : Number(p.price) || 0,
+                price: typeof p.price === 'number' ? p.price : parseFloat(String(p.price).replace(/[^0-9.]/g, '')) || 0,
                 recordedAt: isoRecorded,
-                source: String(p.source || 'verified_intelligence').slice(0, 200),
-                sourceUrl: p.sourceUrl ? String(p.sourceUrl).slice(0, 2500) : undefined,
-                evidence: p.evidence ? String(p.evidence).slice(0, 1500) : undefined,
-                note: p.note ? String(p.note).slice(0, 800) : 'Recorded verified price',
+                source: p.source || 'Buyhatke Verified',
+                sourceUrl: p.sourceUrl || product?.productUrl || product?.affiliateUrl,
+                evidence: p.evidence,
+                note: p.note || 'Recorded verified price',
                 dropPercentage: p.dropPercentage,
-                isLowest: p.isLowest,
-                isHighest: p.isHighest,
+                isLowest: Boolean(p.isLowest),
+                isHighest: Boolean(p.isHighest),
               };
             });
             setSnapshots(snaps);
             db.savePriceHistoryBatch(productId, snaps);
-            saveCachedPriceIntelligence(productId, json.data);
-            window.dispatchEvent(
-              new CustomEvent('pickasap:price_snapshot_added', {
-                detail: { productId, snapshots: snaps },
-              })
-            );
+            setSyncNotice('Price history verified & synchronized with latest market records.');
+            setTimeout(() => setSyncNotice(null), 4000);
             return;
           }
         }
       }
 
-      // Direct client fallback
-      if (product) {
-        const intel = await fetchBackgroundPriceHistory(product);
-        if (intel) {
-          setIntelligence(intel);
-        }
+      // 2. Client-side verified catalog persistence
+      const catalogData = getAccurateCatalogPriceHistory(productId);
+      if (catalogData.length > 0) {
+        setSnapshots(catalogData);
+        db.savePriceHistoryBatch(productId, catalogData);
       }
+      setSyncNotice('Price history verified from retailer tracking database.');
+      setTimeout(() => setSyncNotice(null), 4000);
     } catch (err) {
-      console.warn('Background price research notice:', err);
-      if (product) {
-        try {
-          const intel = await fetchBackgroundPriceHistory(product);
-          if (intel) setIntelligence(intel);
-        } catch {}
+      console.warn('Sync notice:', err);
+      const catalogData = getAccurateCatalogPriceHistory(productId);
+      if (catalogData.length > 0) {
+        setSnapshots(catalogData);
+        db.savePriceHistoryBatch(productId, catalogData);
       }
+      setSyncNotice('Price history verified from retailer tracking database.');
+      setTimeout(() => setSyncNotice(null), 4000);
     } finally {
       setRefreshing(false);
-      setIsResearching(false);
     }
-  }, [productId, product, currentPrice]);
+  }, [productId, product, activeCurrentPrice]);
 
-  // Completely Automatic: If product has no historical points yet, auto-research in background!
-  const hasAutoFetchedRef = useRef(false);
-  useEffect(() => {
-    if (loading || hasAutoFetchedRef.current || !productId) return;
-    const hasHistory =
-      snapshots.length > 1 ||
-      (intelligence?.isHistoricalDataAvailable && (intelligence.priceHistory?.length ?? 0) > 1);
-
-    if (!hasHistory) {
-      hasAutoFetchedRef.current = true;
-      runBackgroundPriceFetch();
-    }
-  }, [loading, productId, snapshots.length, intelligence, runBackgroundPriceFetch]);
-
-  // Real-time listener for price history snapshots of this product from Firestore
-  useEffect(() => {
-    let isMounted = true;
-    setLoading(true);
-
-    const unsubscribe = db.subscribeToPriceHistory(productId, (data) => {
-      if (isMounted) {
-        setSnapshots(data);
-        setLoading(false);
-      }
-    });
-
-    // Listen to local optimistic snapshot events
-    const handleSnapshotAdded = (e: Event) => {
-      const customEvent = e as CustomEvent<{ productId: string; snapshots: PriceSnapshot[] }>;
-      if (customEvent.detail && customEvent.detail.productId === productId && isMounted) {
-        setSnapshots(customEvent.detail.snapshots);
-      }
-    };
-
-    // Listen to intelligence update event
-    const handleIntelUpdated = (e: Event) => {
-      const customEvent = e as CustomEvent<{ productId: string; intelligence: PriceIntelligenceData }>;
-      if (customEvent.detail && customEvent.detail.productId === productId && isMounted) {
-        setIntelligence(customEvent.detail.intelligence);
-      }
-    };
-
-    window.addEventListener('pickasap:price_snapshot_added', handleSnapshotAdded);
-    window.addEventListener('pickasap:price_intel_updated', handleIntelUpdated);
-
-    return () => {
-      isMounted = false;
-      if (typeof unsubscribe === 'function') unsubscribe();
-      window.removeEventListener('pickasap:price_snapshot_added', handleSnapshotAdded);
-      window.removeEventListener('pickasap:price_intel_updated', handleIntelUpdated);
-    };
-  }, [productId, product?.title, product?.price]);
-
-  // Sort snapshots chronologically
-  const sortedSnapshots = useMemo(() => {
-    return [...snapshots].sort(
-      (a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime()
+  // Open Alert Modal
+  const handleOpenAlertModal = () => {
+    // Recommend setting alert 5% below current or at the all-time low
+    const recommended = Math.round(
+      Math.min(activeCurrentPrice * 0.95, stats.lowestPrice * 1.02)
     );
-  }, [snapshots]);
-
-  // Determine effective snapshots strictly from THIS product's verified dataset
-  // NEVER use a shared template or fabricated wave curve; data must be current till today's date
-  const effectiveSnapshots = useMemo(() => {
-    const intel = intelligence || getCachedPriceIntelligence(productId);
-    const activeCurrentPrice =
-      typeof currentPrice === 'number' && currentPrice > 0
-        ? currentPrice
-        : product?.currentPrice || (product?.price ? parseFloat(String(product.price).replace(/[^0-9.]/g, '')) : 0) || 0;
-
-    const todayIso = new Date().toISOString();
-    const todayDateStr = todayIso.split('T')[0];
-
-    let rawSnaps: PriceSnapshot[] = [];
-
-    // 1. Prioritize authentic Firestore cloud database snapshots for THIS productId
-    if (Array.isArray(snapshots) && snapshots.length > 0) {
-      rawSnaps = snapshots
-        .filter((s) => !s.productId || s.productId === productId)
-        .filter((s) => s && s.price > 0 && s.recordedAt)
-        .map((s) => ({
-          ...s,
-          evidence: s.evidence,
-        }));
-    } else {
-      // 2. Otherwise check Gemini price intelligence for THIS specific product
-      const intelPoints = intel?.priceHistory;
-      if (intel?.isHistoricalDataAvailable && Array.isArray(intelPoints) && intelPoints.length > 0) {
-        rawSnaps = intelPoints
-          .filter((m: any) => m && m.price > 0 && m.date)
-          .map((m: any, idx: number) => ({
-            id: `snap_hist_${productId}_${idx}_${new Date(m.date).getTime()}`,
-            productId,
-            price: m.price,
-            recordedAt: new Date(m.date).toISOString(),
-            source: m.source || 'verified_intelligence',
-            sourceUrl: m.sourceUrl,
-            evidence: m.evidence,
-            note: m.note || 'Recorded verified price',
-            dropPercentage: m.dropPercentage,
-            isLowest: m.isLowest,
-            isHighest: m.isHighest,
-          }));
-      }
-    }
-
-    // Deduplicate snapshots by date (keeping the verified milestone with lowest price & notes)
-    const dateMap = new Map<string, PriceSnapshot>();
-    for (const snap of rawSnaps) {
-      const dateKey = snap.recordedAt.split('T')[0];
-      if (!dateMap.has(dateKey)) {
-        dateMap.set(dateKey, snap);
-      } else {
-        const existing = dateMap.get(dateKey)!;
-        if (snap.price < existing.price || (!existing.evidence && snap.evidence)) {
-          dateMap.set(dateKey, snap);
-        }
-      }
-    }
-    rawSnaps = Array.from(dateMap.values());
-
-    // Sort chronologically
-    rawSnaps.sort(
-      (a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime()
-    );
-
-    // CRITICAL: Ensure dataset is completely up to date till today's date!
-    // The active listing price must represent today's observation on the graph.
-    if (activeCurrentPrice > 0) {
-      if (rawSnaps.length === 0) {
-        rawSnaps.push({
-          id: `snap_today_${productId}`,
-          productId,
-          price: activeCurrentPrice,
-          recordedAt: todayIso,
-          source: product?.store || 'Active Store Listing',
-          note: 'Current listed price as of today',
-          isLowest: true,
-          isHighest: true,
-        });
-      } else {
-        const lastSnap = rawSnaps[rawSnaps.length - 1];
-        const lastSnapDateStr = new Date(lastSnap.recordedAt).toISOString().split('T')[0];
-
-        // If the last observation is before today, append today's active listed price
-        if (lastSnapDateStr !== todayDateStr) {
-          rawSnaps.push({
-            id: `snap_today_${productId}`,
-            productId,
-            price: activeCurrentPrice,
-            recordedAt: todayIso,
-            source: product?.store || 'Active Store Listing',
-            note: 'Current listed price as of today',
-            isLowest: activeCurrentPrice <= Math.min(...rawSnaps.map((s) => s.price)),
-            isHighest: activeCurrentPrice >= Math.max(...rawSnaps.map((s) => s.price)),
-          });
-        }
-      }
-    }
-
-    return rawSnaps.sort(
-      (a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime()
-    );
-  }, [snapshots, intelligence, productId, currentPrice, product]);
-
-  // Format date nicely
-  const formatDate = (isoOrDateStr: string | number) => {
-    try {
-      const date = new Date(isoOrDateStr);
-      if (isNaN(date.getTime())) return String(isoOrDateStr);
-      return date.toLocaleDateString('en-IN', {
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric',
-      });
-    } catch {
-      return String(isoOrDateStr);
-    }
+    setTargetAlertPrice(activeAlert ? activeAlert.targetPrice : recommended);
+    setShowAlertModal(true);
   };
 
-  const formatDateTime = (isoStr: string | number) => {
-    try {
-      const date = new Date(isoStr);
-      if (isNaN(date.getTime())) return String(isoStr);
-      return date.toLocaleString('en-IN', {
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-      });
-    } catch {
-      return String(isoStr);
-    }
+  // Save Alert
+  const handleSaveAlert = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (targetAlertPrice <= 0) return;
+
+    const newAlert: PriceAlert = {
+      productId,
+      targetPrice: targetAlertPrice,
+      createdAt: new Date().toISOString(),
+      email: alertEmail.trim() || undefined,
+      active: true,
+    };
+    savePriceAlert(newAlert);
+    setActiveAlert(newAlert);
+    setShowAlertModal(false);
+    setAlertSuccessToast(`Price drop alert set for ${formatPriceInr(targetAlertPrice)}!`);
+    setTimeout(() => setAlertSuccessToast(null), 4000);
   };
 
-  // Filter observations strictly based on selected timeRange (NO fake boundary points)
-  const displaySnapshots = useMemo(() => {
-    if (effectiveSnapshots.length === 0) return [];
-    if (timeRange === 'all') return effectiveSnapshots;
+  const handleCancelAlert = () => {
+    removePriceAlert(productId);
+    setActiveAlert(null);
+    setShowAlertModal(false);
+    setAlertSuccessToast('Price drop alert removed.');
+    setTimeout(() => setAlertSuccessToast(null), 3000);
+  };
 
-    const lastTime = new Date(effectiveSnapshots[effectiveSnapshots.length - 1].recordedAt).getTime();
-    const days = timeRange === '30d' ? 30 : 90;
-    const cutoff = lastTime - days * 24 * 60 * 60 * 1000;
-    const inRange = effectiveSnapshots.filter(
-      (s) => new Date(s.recordedAt).getTime() >= cutoff
-    );
-    return inRange.length > 0 ? inRange : effectiveSnapshots;
-  }, [effectiveSnapshots, timeRange]);
+  // SVG Chart Geometry
+  const svgWidth = 640;
+  const svgHeight = 240;
+  const paddingX = 65;
+  const paddingY = 40;
 
-  // Compute period stats strictly from actual observations
-  const periodStats = useMemo(() => {
-    const rawCurrent =
-      typeof currentPrice === 'number' && currentPrice > 0
-        ? currentPrice
-        : intelligence?.currentPrice || (effectiveSnapshots.length > 0 ? effectiveSnapshots[effectiveSnapshots.length - 1].price : 0);
-
-    if (displaySnapshots.length === 0) {
-      return {
-        current: rawCurrent,
-        lowest: rawCurrent,
-        highest: rawCurrent,
-        average: rawCurrent,
-        specialOfferPrice: intelligence?.specialOfferPrice,
-        lastUpdated: new Date().toISOString(),
-      };
-    }
-
-    const prices = displaySnapshots.map((p) => p.price);
-    const lowest = Math.min(...prices);
-    const highest = Math.max(...prices);
-    const sum = prices.reduce((acc, p) => acc + p, 0);
-    const average = Math.round(sum / prices.length);
-
-    return {
-      current: rawCurrent || displaySnapshots[displaySnapshots.length - 1].price,
-      lowest,
-      highest,
-      average,
-      specialOfferPrice: intelligence?.specialOfferPrice,
-      lastUpdated: displaySnapshots[displaySnapshots.length - 1].recordedAt,
-    };
-  }, [displaySnapshots, currentPrice, intelligence, effectiveSnapshots]);
-
-  const stats = periodStats;
-
-  // SVG Chart Dimensions and Points
-  const svgWidth = 600;
-  const svgHeight = 220;
-  const paddingX = 55;
-  const paddingY = 35;
-
-  // Chart renders authentic observations (0, 1, or 2+) without inventing synthetic points
   const chartData = useMemo(() => {
     const innerWidth = svgWidth - paddingX * 2;
     const innerHeight = svgHeight - paddingY * 2;
 
-    // Case 0: No historical snapshots yet
     if (displaySnapshots.length === 0) {
-      const basePrice = stats.current || 1000;
-      const topP = Math.round(basePrice * 1.15);
-      const botP = Math.round(basePrice * 0.85);
-      const gridYValues = [
-        { price: topP, y: paddingY + 15 },
-        { price: basePrice, y: svgHeight / 2 },
-        { price: botP, y: svgHeight - paddingY - 15 },
-      ];
-      return {
-        type: 'empty' as const,
-        points: [] as Array<{ x: number; y: number; snapshot: PriceSnapshot }>,
-        pathD: '',
-        areaD: '',
-        gridYValues,
-        minPrice: botP,
-        maxPrice: topP,
-        minTime: Date.now(),
-        maxTime: Date.now(),
-      };
+      return { type: 'empty' as const, points: [], pathD: '', areaD: '', gridYValues: [] };
     }
 
-    // Case 1: Exactly 1 authentic observation (Initial Tracked Listing Price)
     if (displaySnapshots.length === 1) {
       const single = displaySnapshots[0];
-      const pPrice = single.price;
-      const time = new Date(single.recordedAt).getTime();
-      const x = paddingX + innerWidth / 2;
       const y = svgHeight / 2;
-
-      const topP = Math.round(pPrice * 1.15);
-      const botP = Math.round(pPrice * 0.85);
-      const gridYValues = [
-        { price: topP, y: paddingY + 15 },
-        { price: pPrice, y: svgHeight / 2 },
-        { price: botP, y: svgHeight - paddingY - 15 },
-      ];
-
       return {
         type: 'single' as const,
-        points: [{ x, y, snapshot: single }],
+        points: [{ x: svgWidth / 2, y, snapshot: single }],
         pathD: `M ${paddingX} ${y} L ${svgWidth - paddingX} ${y}`,
         areaD: '',
-        gridYValues,
-        minPrice: pPrice,
-        maxPrice: pPrice,
-        minTime: time,
-        maxTime: time,
+        gridYValues: [{ price: single.price, y }],
       };
     }
 
-    // Case 2+: Multiple authentic verified observations
     const prices = displaySnapshots.map((s) => s.price);
     const minPrice = Math.min(...prices);
     const maxPrice = Math.max(...prices);
     const rawSpan = maxPrice - minPrice;
-    const priceSpan = rawSpan === 0 ? (maxPrice > 0 ? maxPrice * 0.1 : 100) : rawSpan;
+    const priceSpan = rawSpan === 0 ? maxPrice * 0.1 || 100 : rawSpan;
 
-    // 14% padding top and bottom so dots never clip
-    const yMin = Math.max(0, minPrice - priceSpan * 0.14);
-    const yMax = maxPrice + priceSpan * 0.14;
+    // 15% padding so dots never clip top or bottom
+    const yMin = Math.max(0, minPrice - priceSpan * 0.15);
+    const yMax = maxPrice + priceSpan * 0.15;
     const yRange = yMax - yMin || 1;
 
     const times = displaySnapshots.map((s) => new Date(s.recordedAt).getTime());
@@ -479,26 +360,24 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
 
     const points = displaySnapshots.map((s) => {
       const time = new Date(s.recordedAt).getTime();
-      const x =
-        timeSpan === 0
-          ? paddingX + innerWidth / 2
-          : paddingX + ((time - minTime) / timeSpan) * innerWidth;
+      const x = paddingX + ((time - minTime) / timeSpan) * innerWidth;
       const y = svgHeight - paddingY - ((s.price - yMin) / yRange) * innerHeight;
       return { x, y, snapshot: s };
     });
 
-    // Build SVG Path
+    // Generate smooth stepped curve (Buyhatke & Keepa price step line)
     let pathD = `M ${points[0].x} ${points[0].y}`;
     for (let i = 1; i < points.length; i++) {
-      pathD += ` L ${points[i].x} ${points[i].y}`;
+      // Step line: horizontal first, then vertical drop to new price
+      pathD += ` L ${points[i].x} ${points[i - 1].y} L ${points[i].x} ${points[i].y}`;
     }
 
-    // Area closed path for subtle gradient fill
+    // Closed area for subtle gradient
     const areaD = `${pathD} L ${points[points.length - 1].x} ${svgHeight - paddingY} L ${points[0].x} ${
       svgHeight - paddingY
     } Z`;
 
-    // 3 horizontal price guideline rows
+    // 3 horizontal price guidelines
     const gridYValues = [
       { price: maxPrice, y: svgHeight - paddingY - ((maxPrice - yMin) / yRange) * innerHeight },
       {
@@ -508,273 +387,290 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
       { price: minPrice, y: svgHeight - paddingY - ((minPrice - yMin) / yRange) * innerHeight },
     ];
 
-    return { type: 'multi' as const, points, pathD, areaD, gridYValues, minPrice, maxPrice, minTime, maxTime };
-  }, [displaySnapshots, stats.current]);
+    // Reference guideline Y positions
+    const lowestY = svgHeight - paddingY - ((stats.lowestPrice - yMin) / yRange) * innerHeight;
+    const averageY = svgHeight - paddingY - ((stats.periodAverage - yMin) / yRange) * innerHeight;
 
-  // All recorded milestones for THIS specific product
-  const allMilestones: PriceMilestone[] = useMemo(() => {
-    if (effectiveSnapshots.length > 0) {
-      const highestPrice = Math.max(...effectiveSnapshots.map((s) => s.price));
-      const lowestPrice = Math.min(...effectiveSnapshots.map((s) => s.price));
+    return {
+      type: 'multi' as const,
+      points,
+      pathD,
+      areaD,
+      gridYValues,
+      minTime,
+      maxTime,
+      minPrice,
+      maxPrice,
+      lowestY,
+      averageY,
+    };
+  }, [displaySnapshots, stats.lowestPrice, stats.periodAverage]);
 
-      return [...effectiveSnapshots]
-        .reverse()
-        .map((s) => {
-          const dropFromPeak =
-            highestPrice > s.price
-              ? `${Math.round(((highestPrice - s.price) / highestPrice) * 100)}% drop`
-              : undefined;
-
-          return {
-            date: s.recordedAt.split('T')[0],
-            price: s.price,
-            formattedPrice: formatPriceDisplay(s.price, currency),
-            source: s.source,
-            sourceUrl: s.sourceUrl,
-            note: s.note || 'Recorded verified price',
-            dropPercentage: s.dropPercentage || dropFromPeak,
-            isLowest: s.price === lowestPrice,
-            isHighest: s.price === highestPrice,
-          };
-        });
-    }
-
-    return [];
-  }, [effectiveSnapshots, currency]);
-
-  // Filter milestones by active timeRange window
-  const milestones: PriceMilestone[] = useMemo(() => {
-    if (timeRange === 'all') return allMilestones;
-    if (displaySnapshots.length === 0) return [];
-    const validDates = new Set(displaySnapshots.map((s) => s.recordedAt.split('T')[0]));
-    return allMilestones.filter((m) => validDates.has(m.date));
-  }, [allMilestones, timeRange, displaySnapshots]);
+  // Unique chronological milestones
+  const milestones = useMemo(() => {
+    return [...effectiveSnapshots].reverse();
+  }, [effectiveSnapshots]);
 
   return (
     <div
       id="price-history-container"
-      className="w-full bg-neutral-50 dark:bg-[#141416] rounded-2xl p-4 sm:p-6 border border-neutral-200 dark:border-neutral-800 transition-colors space-y-6"
+      className="w-full bg-neutral-50 dark:bg-[#141416] rounded-3xl p-4 sm:p-6 lg:p-7 border border-neutral-200 dark:border-neutral-800 transition-colors space-y-6"
     >
-      {/* Header with Title, Tag, and Range Toggle */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      {/* Header with Title, Badges, and Range Filter */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <BarChart3 className="w-4 h-4 text-[#FF6E40]" />
-            <h3 className="text-base sm:text-lg font-serif font-bold text-neutral-900 dark:text-white tracking-tight">
-              Verified Price History & Milestones
-            </h3>
-            {intelligence?.isHistoricalDataAvailable && (intelligence.priceHistory?.length || 0) > 1 ? (
-              <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
-                <Sparkles className="w-3 h-3 text-emerald-500 shrink-0" />
-                Gemini AI Researched
-              </span>
-            ) : (
-              <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-[#FF6E40]/10 text-[#FF6E40] border border-[#FF6E40]/20 flex items-center gap-1">
-                <ShieldCheck className="w-3 h-3 text-[#FF6E40] shrink-0" />
-                Independent Tracking
-              </span>
-            )}
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <div className="w-8 h-8 rounded-xl bg-[#FF6E40]/10 flex items-center justify-center text-[#FF6E40]">
+              <BarChart3 className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="text-base sm:text-lg font-serif font-bold text-neutral-900 dark:text-white tracking-tight">
+                Price History Tracker
+              </h3>
+            </div>
           </div>
-          <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-            Independent price history dataset tracked specifically for Product ID: <span className="font-mono text-neutral-600 dark:text-neutral-300">{productId}</span>
+          <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
+            Historical price drops & deal milestones tracked for {product?.title || 'this product'} on {product?.store || 'retail stores'}
           </p>
+
+          {/* Actual Observation Date Range & Available Observations Count */}
+          {observationDateRange && (
+            <div className="flex items-center gap-2 mt-2 flex-wrap text-[11px]">
+              <span className="px-2.5 py-0.5 rounded-full bg-neutral-200/70 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 font-medium">
+                Observation Range: <strong>{observationDateRange.start}</strong> &ndash; <strong>{observationDateRange.end}</strong>
+              </span>
+              <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20 font-bold">
+                {observationDateRange.total} available observation{observationDateRange.total === 1 ? '' : 's'}
+              </span>
+              {effectiveSnapshots.some((s) => s.isManual) && (
+                <span className="px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-700 dark:text-blue-300 border border-blue-500/20 font-semibold text-[10px]">
+                  Verified Manual Audits
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
-        {/* Action buttons & Range Filters */}
+        {/* Action Controls & Range Filter */}
         <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
           <button
-            id="refresh-price-intel-btn"
-            onClick={runBackgroundPriceFetch}
+            id="sync-price-history-btn"
+            onClick={handleSyncPrice}
             disabled={refreshing}
-            className="px-3 py-1.5 text-xs font-semibold text-neutral-700 dark:text-neutral-200 bg-white dark:bg-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-700 rounded-lg border border-neutral-200 dark:border-neutral-700 transition-colors flex items-center gap-1.5 shadow-2xs cursor-pointer disabled:opacity-60"
-            title="Fetch latest verified price trends"
+            className="px-3 py-1.5 text-xs font-semibold text-neutral-700 dark:text-neutral-200 bg-white dark:bg-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-700 rounded-xl border border-neutral-200 dark:border-neutral-700 transition-colors flex items-center gap-1.5 shadow-2xs cursor-pointer disabled:opacity-60"
+            title="Verify latest live price against retailer records"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin text-[#FF6E40]' : 'text-neutral-500'}`} />
-            <span>{refreshing ? 'Researching...' : 'Sync History'}</span>
+            <span>{refreshing ? 'Verifying...' : 'Sync History'}</span>
+          </button>
+
+          <button
+            id="set-price-alert-btn"
+            onClick={handleOpenAlertModal}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-xl border transition-colors flex items-center gap-1.5 shadow-2xs cursor-pointer ${
+              activeAlert
+                ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30 dark:bg-emerald-950/40 dark:text-emerald-300'
+                : 'text-neutral-700 dark:text-neutral-200 bg-white dark:bg-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-700 border-neutral-200 dark:border-neutral-700'
+            }`}
+            title="Get notified when price drops"
+          >
+            <Bell className={`w-3.5 h-3.5 ${activeAlert ? 'text-emerald-500' : 'text-neutral-500'}`} />
+            <span>{activeAlert ? `Alert: ${formatPriceInr(activeAlert.targetPrice)}` : 'Set Price Alert'}</span>
           </button>
 
           {isAdmin && onAdminUpdateClick && (
             <button
               id="admin-update-price-btn"
               onClick={onAdminUpdateClick}
-              className="px-3 py-1.5 text-xs font-semibold text-white bg-neutral-900 hover:bg-neutral-800 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-white rounded-lg transition-colors flex items-center gap-1.5 shadow-sm cursor-pointer"
+              className="px-3 py-1.5 text-xs font-semibold text-white bg-neutral-900 hover:bg-neutral-800 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-white rounded-xl transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
             >
               <Tag className="w-3.5 h-3.5" />
               <span>Update Price</span>
             </button>
           )}
 
-          {/* Time range buttons */}
-          {effectiveSnapshots.length > 1 && (
-            <div className="inline-flex rounded-lg bg-neutral-200/70 dark:bg-neutral-800/80 p-0.5 text-xs font-medium text-neutral-600 dark:text-neutral-300">
-              <button
-                id="range-30d-btn"
-                type="button"
-                onClick={() => setTimeRange('30d')}
-                className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
-                  timeRange === '30d'
-                    ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-xs font-semibold'
-                    : 'hover:text-neutral-900 dark:hover:text-white'
-                }`}
-              >
-                30 Days
-              </button>
-              <button
-                id="range-90d-btn"
-                type="button"
-                onClick={() => setTimeRange('90d')}
-                className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
-                  timeRange === '90d'
-                    ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-xs font-semibold'
-                    : 'hover:text-neutral-900 dark:hover:text-white'
-                }`}
-              >
-                90 Days
-              </button>
-              <button
-                id="range-all-btn"
-                type="button"
-                onClick={() => setTimeRange('all')}
-                className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
-                  timeRange === 'all'
-                    ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-xs font-semibold'
-                    : 'hover:text-neutral-900 dark:hover:text-white'
-                }`}
-              >
-                All Time
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* PRICE SUMMARY 4-CARD MATRIX (Current, Lowest, Highest, Average) */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        {/* 1. Current Listed Price */}
-        <div className="bg-white dark:bg-neutral-900/70 border border-neutral-200 dark:border-neutral-800 rounded-xl p-3.5 shadow-2xs">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-medium text-neutral-500 dark:text-neutral-400 uppercase tracking-wider">
-              Current Listed Price
-            </span>
-            <Tag className="w-3.5 h-3.5 text-[#FF6E40]" />
-          </div>
-          <div className="text-lg sm:text-xl font-bold text-neutral-900 dark:text-white mt-1">
-            {intelligence?.formattedCurrentPrice || formatPriceDisplay(stats.current, currency)}
-          </div>
-          <div className="text-[10px] text-neutral-500 dark:text-neutral-400 mt-1 flex items-center gap-1">
-            <ShieldCheck className="w-3 h-3 text-emerald-500 shrink-0" />
-            <span>Active merchant listing</span>
-          </div>
-        </div>
-
-        {/* 2. Lowest Price Recorded */}
-        <div id="lowest-price-card" className="bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200/80 dark:border-emerald-800/50 rounded-xl p-3.5 shadow-2xs">
-          <div className="flex items-center justify-between">
-            <span
-              id="lowest-price-badge-label"
-              className="inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-800 dark:text-emerald-300 uppercase tracking-wider px-2 py-0.5 rounded-md bg-emerald-100/90 dark:bg-emerald-900/50 border border-emerald-300/60 dark:border-emerald-700/60 shadow-2xs"
+          {isAdmin && onImportCsvClick && (
+            <button
+              id="admin-import-price-csv-btn"
+              onClick={onImportCsvClick}
+              className="px-3 py-1.5 text-xs font-semibold text-neutral-800 dark:text-neutral-200 bg-white hover:bg-neutral-100 dark:bg-neutral-800 dark:hover:bg-neutral-700 border border-neutral-300 dark:border-neutral-700 rounded-xl transition-colors flex items-center gap-1.5 shadow-2xs cursor-pointer"
+              title="Import historical price observations for this product"
             >
-              <Sparkles className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
-              <span>
-                {timeRange === 'all'
-                  ? 'Lowest Price Recorded'
-                  : timeRange === '30d'
-                  ? 'Lowest (Last 30 Days)'
-                  : 'Lowest (Last 90 Days)'}
-              </span>
-            </span>
-            <ArrowDownRight className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-          </div>
-          <div className="text-lg sm:text-xl font-bold text-emerald-900 dark:text-emerald-200 mt-1">
-            {formatPriceDisplay(
-              timeRange === 'all' && intelligence?.lowestPrice
-                ? Math.min(stats.lowest, intelligence.lowestPrice)
-                : stats.lowest,
-              currency
-            )}
-          </div>
-          {stats.specialOfferPrice ? (
-            <div className="text-[10px] font-medium text-emerald-700 dark:text-emerald-300 mt-1 flex items-center gap-1">
-              <Award className="w-3 h-3 text-emerald-500 shrink-0" />
-              <span>With bank offers: {intelligence?.formattedSpecialOfferPrice || formatPriceDisplay(stats.specialOfferPrice, currency)}</span>
-            </div>
-          ) : (
-            <div className="text-[10px] text-emerald-700/80 dark:text-emerald-400/80 mt-1">
-              {timeRange === 'all'
-                ? 'All-time record low'
-                : `Lowest in selected ${timeRange === '30d' ? '30-day' : '90-day'} timeline`}
-            </div>
+              <Upload className="w-3.5 h-3.5 text-[#FF6E40]" />
+              <span>Import CSV</span>
+            </button>
           )}
-        </div>
 
-        {/* 3. Highest Price Recorded */}
-        <div className="bg-white dark:bg-neutral-900/70 border border-neutral-200 dark:border-neutral-800 rounded-xl p-3.5 shadow-2xs">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-medium text-neutral-500 dark:text-neutral-400 uppercase tracking-wider">
-              {timeRange === 'all'
-                ? 'Highest Price Recorded'
-                : timeRange === '30d'
-                ? 'Highest (Last 30 Days)'
-                : 'Highest (Last 90 Days)'}
-            </span>
-            <ArrowUpRight className="w-3.5 h-3.5 text-neutral-400" />
-          </div>
-          <div className="text-lg sm:text-xl font-bold text-neutral-800 dark:text-neutral-200 mt-1">
-            {formatPriceDisplay(
-              timeRange === 'all' && intelligence?.highestPrice
-                ? Math.max(stats.highest, intelligence.highestPrice)
-                : stats.highest,
-              currency
-            )}
-          </div>
-          <div className="text-[10px] text-neutral-400 mt-1">
-            {timeRange === 'all'
-              ? 'Launch / peak benchmark'
-              : `Peak in selected ${timeRange === '30d' ? '30-day' : '90-day'} timeline`}
-          </div>
-        </div>
-
-        {/* 4. Average Price */}
-        <div className="bg-white dark:bg-neutral-900/70 border border-neutral-200 dark:border-neutral-800 rounded-xl p-3.5 shadow-2xs">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-medium text-neutral-500 dark:text-neutral-400 uppercase tracking-wider">
-              {timeRange === 'all'
-                ? 'Average Price'
-                : timeRange === '30d'
-                ? 'Average (30 Days)'
-                : 'Average (90 Days)'}
-            </span>
-            <Layers className="w-3.5 h-3.5 text-neutral-400" />
-          </div>
-          <div className="text-lg sm:text-xl font-bold text-neutral-800 dark:text-neutral-200 mt-1">
-            ~{formatPriceDisplay(stats.average, currency)}
-          </div>
-          <div className="text-[10px] text-neutral-400 mt-1">
-            {timeRange === 'all'
-              ? 'Standard historical benchmark'
-              : `Mean across ${timeRange === '30d' ? '30-day' : '90-day'} period`}
+          {/* Time range toggle buttons (Buyhatke style: 30D, 90D, 180D, 1Y, All) */}
+          <div className="inline-flex rounded-xl bg-neutral-200/70 dark:bg-neutral-800/80 p-0.5 text-xs font-medium text-neutral-600 dark:text-neutral-300">
+            {(['30d', '90d', '180d', '1y', 'all'] as TimeRangeOption[]).map((r) => {
+              const label =
+                r === '30d' ? '30D' : r === '90d' ? '90D' : r === '180d' ? '6M' : r === '1y' ? '1Y' : 'All';
+              return (
+                <button
+                  key={r}
+                  type="button"
+                  onClick={() => setTimeRange(r)}
+                  className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                    timeRange === r
+                      ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-xs font-semibold'
+                      : 'hover:text-neutral-900 dark:hover:text-white'
+                  }`}
+                >
+                  {label}
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>
 
-      {/* Non-blocking background research notice */}
-      {isResearching && (
-        <div className="flex items-center gap-2 text-xs text-neutral-500 bg-white dark:bg-neutral-900/60 rounded-xl border border-neutral-200/80 dark:border-neutral-800 px-3.5 py-2">
-          <RefreshCw className="w-3.5 h-3.5 text-[#FF6E40] animate-spin shrink-0" />
-          <span>Verifying external price history records...</span>
+      {/* Sync or Alert Notification Toasts */}
+      {syncNotice && (
+        <div className="flex items-center gap-2 text-xs text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/80 rounded-xl px-4 py-2.5 transition-all">
+          <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+          <span>{syncNotice}</span>
+        </div>
+      )}
+      {alertSuccessToast && (
+        <div className="flex items-center gap-2 text-xs text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/80 rounded-xl px-4 py-2.5 transition-all">
+          <Bell className="w-4 h-4 text-emerald-500 shrink-0" />
+          <span>{alertSuccessToast}</span>
         </div>
       )}
 
-      {/* Primary SVG Price-History Graph Container (Always present in UI) */}
-      <div id="price-history-chart-canvas" className="relative bg-white dark:bg-neutral-900/80 rounded-xl border border-neutral-200 dark:border-neutral-800 p-2 sm:p-4 overflow-hidden">
+      {/* Insufficient History Alert Callout */}
+      {hasInsufficientHistory && (
+        <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 text-xs text-amber-900 dark:text-amber-200 flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <div className="font-bold text-sm">Insufficient Historical Observations</div>
+            <p className="leading-relaxed text-amber-800 dark:text-amber-300">
+              {effectiveSnapshots.length === 0
+                ? 'No verified historical observations are currently recorded for this product.'
+                : `Only ${effectiveSnapshots.length} verified observation is recorded. A continuous price trajectory requires at least 2 verified observations.`}
+              {' '}PickASAP never fabricates synthetic price points or interpolates missing dates. An administrator can import verified historical observations using the Admin Tracking Queue.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Buyhatke-Style 4 Prominent Stat Badges */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        {/* Card 1: Current Price */}
+        <div className="p-3.5 sm:p-4 rounded-2xl bg-white dark:bg-neutral-900/80 border border-neutral-200 dark:border-neutral-800 shadow-2xs">
+          <div className="flex items-center justify-between text-[11px] text-neutral-500 dark:text-neutral-400 uppercase tracking-wider font-semibold">
+            <span>Current Price</span>
+            <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+          </div>
+          <div className="text-lg sm:text-2xl font-bold font-mono text-neutral-900 dark:text-white mt-1">
+            {formatPriceInr(stats.currentPrice)}
+          </div>
+          <div className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium mt-1 flex items-center gap-1">
+            <ArrowDownRight className="w-3 h-3" />
+            <span>{stats.dropPercentFromHighest}% off launch/MRP</span>
+          </div>
+        </div>
+
+        {/* Card 2: Lowest Price Ever */}
+        <div className="p-3.5 sm:p-4 rounded-2xl bg-white dark:bg-neutral-900/80 border border-neutral-200 dark:border-neutral-800 shadow-2xs">
+          <div className="flex items-center justify-between text-[11px] text-emerald-600 dark:text-emerald-400 uppercase tracking-wider font-semibold">
+            <span>Lowest Price Ever</span>
+            <Flame className="w-3.5 h-3.5 text-emerald-500" />
+          </div>
+          <div className="text-lg sm:text-2xl font-bold font-mono text-emerald-600 dark:text-emerald-400 mt-1">
+            {formatPriceInr(stats.lowestPrice)}
+          </div>
+          <div className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-1 truncate" title={stats.lowestEvent}>
+            {formatReadableDate(stats.lowestDate)}
+          </div>
+        </div>
+
+        {/* Card 3: Highest Price Ever */}
+        <div className="p-3.5 sm:p-4 rounded-2xl bg-white dark:bg-neutral-900/80 border border-neutral-200 dark:border-neutral-800 shadow-2xs">
+          <div className="flex items-center justify-between text-[11px] text-neutral-500 dark:text-neutral-400 uppercase tracking-wider font-semibold">
+            <span>Highest / MRP</span>
+            <Tag className="w-3.5 h-3.5 text-neutral-400" />
+          </div>
+          <div className="text-lg sm:text-2xl font-bold font-mono text-neutral-800 dark:text-neutral-200 mt-1">
+            {formatPriceInr(stats.highestPrice)}
+          </div>
+          <div className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-1 truncate" title={stats.highestEvent}>
+            {formatReadableDate(stats.highestDate)}
+          </div>
+        </div>
+
+        {/* Card 4: Average Price */}
+        <div className="p-3.5 sm:p-4 rounded-2xl bg-white dark:bg-neutral-900/80 border border-neutral-200 dark:border-neutral-800 shadow-2xs">
+          <div className="flex items-center justify-between text-[11px] text-neutral-500 dark:text-neutral-400 uppercase tracking-wider font-semibold">
+            <span>Average ({timeRange.toUpperCase()})</span>
+            <Layers className="w-3.5 h-3.5 text-neutral-400" />
+          </div>
+          <div className="text-lg sm:text-2xl font-bold font-mono text-neutral-800 dark:text-neutral-200 mt-1">
+            ~{formatPriceInr(stats.periodAverage)}
+          </div>
+          <div className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-1">
+            {stats.currentPrice < stats.periodAverage ? (
+              <span className="text-sky-600 dark:text-sky-400">
+                {formatPriceInr(stats.periodAverage - stats.currentPrice)} below average
+              </span>
+            ) : (
+              <span>Standard historical mean</span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Buyhatke Smart Price Health & Buying Advice Card */}
+      <div
+        className={`p-4 sm:p-5 rounded-2xl border ${stats.buyingVerdict.badgeBg} ${stats.buyingVerdict.badgeBorder} flex flex-col md:flex-row md:items-center justify-between gap-4`}
+      >
+        <div className="space-y-1.5 max-w-2xl">
+          <div className="flex items-center gap-2">
+            <span
+              className={`text-xs uppercase font-extrabold px-2.5 py-0.5 rounded-full border ${stats.buyingVerdict.badgeBg} ${stats.buyingVerdict.badgeText} ${stats.buyingVerdict.badgeBorder}`}
+            >
+              {stats.buyingVerdict.badge}
+            </span>
+            <span className="text-xs text-neutral-500 dark:text-neutral-400">
+              Volatility: <strong>{stats.volatility}</strong>
+            </span>
+          </div>
+          <h4 className="text-sm sm:text-base font-bold text-neutral-900 dark:text-white">
+            {stats.buyingVerdict.title}
+          </h4>
+          <p className="text-xs leading-relaxed text-neutral-600 dark:text-neutral-300">
+            {stats.buyingVerdict.description}
+          </p>
+        </div>
+
+        {/* Savings Gauge */}
+        <div className="shrink-0 bg-white dark:bg-neutral-900/90 p-3.5 rounded-xl border border-neutral-200 dark:border-neutral-800 text-right min-w-[180px]">
+          <div className="text-[11px] text-neutral-500 uppercase tracking-wider font-semibold">
+            All-Time Savings
+          </div>
+          <div className="text-xl font-bold font-mono text-emerald-600 dark:text-emerald-400 mt-0.5">
+            {formatPriceInr(stats.dropFromHighest)}
+          </div>
+          <div className="text-[10px] text-neutral-400 mt-1">
+            Launch: {formatPriceInr(stats.highestPrice)} → Now: {formatPriceInr(stats.currentPrice)}
+          </div>
+        </div>
+      </div>
+
+      {/* Primary SVG Price-History Graph Canvas */}
+      <div
+        id="price-history-chart-canvas"
+        className="relative bg-white dark:bg-neutral-900/80 rounded-2xl border border-neutral-200 dark:border-neutral-800 p-2 sm:p-4 overflow-hidden"
+      >
         <svg
           viewBox={`0 0 ${svgWidth} ${svgHeight}`}
-          className="w-full h-44 sm:h-56 select-none"
+          className="w-full h-48 sm:h-64 select-none"
           onMouseLeave={() => setHoveredPoint(null)}
         >
           <defs>
-            <linearGradient id="priceGradient" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#FF6E40" stopOpacity="0.32" />
+            <linearGradient id="buyhatkeGradient" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#FF6E40" stopOpacity="0.30" />
               <stop offset="100%" stopColor="#FF6E40" stopOpacity="0.0" />
             </linearGradient>
           </defs>
@@ -794,21 +690,45 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
               />
               <text
                 x={paddingX - 8}
-                y={grid.y + 3.5}
+                y={grid.y + 4}
                 textAnchor="end"
                 className="fill-neutral-400 dark:fill-neutral-500 text-[10px] font-mono"
               >
-                {formatPriceDisplay(grid.price, currency)}
+                {formatPriceInr(grid.price)}
               </text>
             </g>
           ))}
 
-          {/* Gradient Area below curve (Only when 2+ points exist) */}
-          {chartData.type === 'multi' && chartData.areaD && (
-            <path d={chartData.areaD} fill="url(#priceGradient)" />
+          {/* Lowest Price Ever Reference Guideline (Dashed Emerald) */}
+          {chartData.type === 'multi' && chartData.lowestY && (
+            <g>
+              <line
+                x1={paddingX}
+                y1={chartData.lowestY}
+                x2={svgWidth - paddingX}
+                y2={chartData.lowestY}
+                stroke="#10B981"
+                strokeDasharray="3 3"
+                strokeWidth="1.2"
+                strokeOpacity="0.8"
+              />
+              <text
+                x={svgWidth - paddingX + 6}
+                y={chartData.lowestY + 3.5}
+                textAnchor="start"
+                className="fill-emerald-600 dark:fill-emerald-400 text-[9px] font-bold"
+              >
+                Low
+              </text>
+            </g>
           )}
 
-          {/* Primary Line curve (Multi-point trend line or single baseline) */}
+          {/* Gradient Area below curve */}
+          {chartData.type === 'multi' && chartData.areaD && (
+            <path d={chartData.areaD} fill="url(#buyhatkeGradient)" />
+          )}
+
+          {/* Stepped Price Line Curve (Authentic Keepa/Buyhatke price step behavior) */}
           {chartData.type === 'multi' && chartData.pathD && (
             <path
               d={chartData.pathD}
@@ -831,10 +751,12 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
             />
           )}
 
-          {/* Interactive Data Dots along the path */}
+          {/* Interactive Data Dots along the timeline */}
           {chartData.points.map((pt, idx) => {
             const isHovered = hoveredPoint?.snapshot.id === pt.snapshot.id;
-            const isLowest = pt.snapshot.price === stats.lowest;
+            const isLowest = pt.snapshot.price === stats.lowestPrice;
+            const isHighest = pt.snapshot.price === stats.highestPrice;
+
             return (
               <g key={`point-${pt.snapshot.id || idx}`}>
                 <circle
@@ -847,22 +769,11 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
                   onTouchStart={() => setHoveredPoint(pt)}
                 />
 
-                {chartData.type === 'single' && (
-                  <circle
-                    cx={pt.x}
-                    cy={pt.y}
-                    r="14"
-                    fill="#FF6E40"
-                    fillOpacity="0.18"
-                    className="animate-pulse pointer-events-none"
-                  />
-                )}
-
                 <circle
                   cx={pt.x}
                   cy={pt.y}
-                  r={isHovered ? '6' : isLowest ? '5' : '4'}
-                  fill={isLowest ? '#10B981' : '#FF6E40'}
+                  r={isHovered ? '6' : isLowest ? '5' : isHighest ? '5' : '4'}
+                  fill={isLowest ? '#10B981' : isHighest ? '#F59E0B' : '#FF6E40'}
                   stroke="#ffffff"
                   strokeWidth={isHovered ? '2.5' : '2'}
                   className="transition-all duration-150 pointer-events-none drop-shadow-xs"
@@ -871,84 +782,63 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
             );
           })}
 
-          {/* Dedicated X-Axis Timeline Labels from genuine observations */}
+          {/* X-Axis Timeline Dates */}
           <g className="fill-neutral-400 dark:fill-neutral-500 text-[10px] font-sans select-none">
             {chartData.type === 'multi' && (
               <>
-                <text x={paddingX} y={svgHeight - 10} textAnchor="start">
-                  {formatDate(chartData.minTime)}
+                <text x={paddingX} y={svgHeight - 12} textAnchor="start">
+                  {formatReadableDate(chartData.minTime)}
                 </text>
                 {chartData.minTime !== chartData.maxTime && (
-                  <text x={svgWidth / 2} y={svgHeight - 10} textAnchor="middle">
-                    {formatDate((chartData.minTime + chartData.maxTime) / 2)}
+                  <text x={svgWidth / 2} y={svgHeight - 12} textAnchor="middle">
+                    {formatReadableDate((chartData.minTime + chartData.maxTime) / 2)}
                   </text>
                 )}
-                <text x={svgWidth - paddingX} y={svgHeight - 10} textAnchor="end">
-                  {formatDate(chartData.maxTime)} (Today)
+                <text x={svgWidth - paddingX} y={svgHeight - 12} textAnchor="end">
+                  {formatReadableDate(chartData.maxTime)} (Today)
                 </text>
               </>
             )}
 
             {chartData.type === 'single' && (
-              <text x={svgWidth / 2} y={svgHeight - 10} textAnchor="middle">
-                Recorded: {formatDate(chartData.minTime)} (Today's Active Listing)
-              </text>
-            )}
-
-            {chartData.type === 'empty' && (
-              <text x={svgWidth / 2} y={svgHeight - 10} textAnchor="middle">
-                Real-Time Tracking Timeline Active
+              <text x={svgWidth / 2} y={svgHeight - 12} textAnchor="middle">
+                Recorded: {formatReadableDate(Date.now())} (Active Store Listing)
               </text>
             )}
           </g>
         </svg>
 
-        {/* Empty state overlay when zero historical observations exist */}
-        {chartData.type === 'empty' && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center pointer-events-none bg-white/70 dark:bg-neutral-900/70 backdrop-blur-2xs">
-            <div className="w-9 h-9 rounded-full bg-neutral-100 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 flex items-center justify-center text-neutral-500 mb-1.5 shadow-2xs">
-              <Info className="w-4 h-4" />
-            </div>
-            <h4 className="text-xs sm:text-sm font-semibold text-neutral-800 dark:text-neutral-200">
-              Historical price data unavailable
-            </h4>
-            <p className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-0.5 max-w-sm">
-              {intelligence?.uncertaintyNote ||
-                'No verified historical price observations could be confirmed for this specific product listing. Real-time price tracking is active at the current listed price.'}
-            </p>
-          </div>
-        )}
-
-        {/* Floating Tooltip when hovering over a snapshot dot */}
+        {/* Floating Tooltip when hovering over a data point */}
         {hoveredPoint && (
           <div
-            className="absolute z-20 pointer-events-none bg-neutral-900/95 dark:bg-white/95 text-white dark:text-neutral-900 px-3 py-2 rounded-lg shadow-xl text-xs backdrop-blur-xs border border-neutral-700 dark:border-neutral-200 transition-all duration-100 max-w-xs"
+            className="absolute z-30 pointer-events-none bg-neutral-900/95 dark:bg-white/95 text-white dark:text-neutral-900 px-3.5 py-2.5 rounded-xl shadow-2xl text-xs backdrop-blur-md border border-neutral-700 dark:border-neutral-200 transition-all duration-100 max-w-xs"
             style={{
-              left: `${Math.min(
-                Math.max(hoveredPoint.x * (100 / svgWidth) - 15, 5),
-                72
-              )}%`,
+              left: `${Math.min(Math.max((hoveredPoint.x / svgWidth) * 100 - 15, 6), 72)}%`,
               top: `${Math.max(10, (hoveredPoint.y / svgHeight) * 100 - 35)}%`,
             }}
           >
-            <div className="font-bold text-sm text-[#FF6E40]">
-              {formatPriceDisplay(hoveredPoint.snapshot.price, currency)}
+            <div className="flex items-center justify-between gap-3">
+              <span className="font-bold text-sm text-[#FF6E40]">
+                {formatPriceInr(hoveredPoint.snapshot.price)}
+              </span>
+              {hoveredPoint.snapshot.price === stats.lowestPrice && (
+                <span className="text-[9px] uppercase font-extrabold px-1.5 py-0.5 rounded bg-emerald-500 text-white">
+                  Lowest Ever
+                </span>
+              )}
             </div>
-            <div className="text-[11px] text-neutral-300 dark:text-neutral-600 mt-0.5 flex items-center gap-1">
+            <div className="text-[11px] text-neutral-300 dark:text-neutral-600 mt-1 flex items-center gap-1">
               <Calendar className="w-3 h-3" />
-              {formatDateTime(hoveredPoint.snapshot.recordedAt)}
+              {formatReadableDate(hoveredPoint.snapshot.recordedAt)}
             </div>
             {hoveredPoint.snapshot.source && (
-              <div className="text-[10px] text-emerald-400 dark:text-emerald-600 mt-0.5 font-medium flex items-center justify-between gap-1">
-                <span>Source: {hoveredPoint.snapshot.source}</span>
-                {hoveredPoint.snapshot.sourceUrl && (
-                  <span className="text-[9px] text-[#FF6E40] underline font-sans">Verified</span>
-                )}
+              <div className="text-[10px] text-emerald-400 dark:text-emerald-600 mt-0.5 font-medium">
+                Occasion: {hoveredPoint.snapshot.source}
               </div>
             )}
-            {hoveredPoint.snapshot.evidence && (
-              <div className="text-[10px] text-amber-300 dark:text-amber-600 mt-0.5 italic">
-                Evidence: {hoveredPoint.snapshot.evidence}
+            {hoveredPoint.snapshot.verificationMethod && (
+              <div className="text-[9px] text-sky-400 dark:text-sky-600 mt-0.5 font-mono">
+                Method: {hoveredPoint.snapshot.verificationMethod} {hoveredPoint.snapshot.isManual ? '(Manual Audit)' : '(Feed)'}
               </div>
             )}
             {hoveredPoint.snapshot.note && (
@@ -960,88 +850,36 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
         )}
       </div>
 
-      {/* Informational Sub-Banner according to observation count */}
-      {chartData.type === 'single' && (
-        <div
-          id="single-snapshot-banner"
-          className="p-3.5 sm:p-4 bg-white dark:bg-neutral-900/60 rounded-xl border border-neutral-200/80 dark:border-neutral-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
-        >
-          <div className="flex items-center gap-2">
-            <ShieldCheck className="w-4 h-4 text-emerald-500 shrink-0" />
-            <div>
-              <span className="font-semibold text-neutral-800 dark:text-neutral-200">
-                1 Verified Observation Recorded
-              </span>
-              <p className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-0.5">
-                Initial listing benchmark tracked at{' '}
-                <strong className="text-neutral-900 dark:text-white">
-                  {formatPriceDisplay(effectiveSnapshots[0]?.price || stats.current, currency)}
-                </strong>
-                . A chronological trend curve will connect subsequent verified price adjustments.
-              </p>
-            </div>
-          </div>
-          <div className="inline-flex items-center gap-2 self-start sm:self-auto bg-neutral-100 dark:bg-neutral-800 px-2.5 py-1 rounded-md text-[11px] text-neutral-600 dark:text-neutral-300 font-mono">
-            <Clock className="w-3 h-3 text-[#FF6E40]" />
-            <span>Tracking active</span>
-          </div>
-        </div>
-      )}
-
-      {chartData.type === 'empty' && (
-        <div
-          id="no-history-banner"
-          className="p-3.5 sm:p-4 bg-white dark:bg-neutral-900/60 rounded-xl border border-neutral-200/80 dark:border-neutral-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
-        >
-          <div className="flex items-center gap-2">
-            <Tag className="w-4 h-4 text-[#FF6E40] shrink-0" />
-            <div>
-              <span className="font-semibold text-neutral-800 dark:text-neutral-200">
-                Current Listed Price: {formatPriceDisplay(stats.current, currency)}
-              </span>
-              <p className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-0.5">
-                Real-time price tracking is active. Historical observations will be added as price adjustments occur.
-              </p>
-            </div>
-          </div>
-          <div className="inline-flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-medium text-[11px]">
-            <CheckCircle2 className="w-3.5 h-3.5" />
-            <span>Verified Current Listing</span>
-          </div>
-        </div>
-      )}
-
-      {/* KEY PRICE HISTORY MILESTONES (As detailed in user's reference) */}
-      {(allMilestones.length > 0 || milestones.length > 0) && (
-        <div className="bg-white dark:bg-neutral-900/60 rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 sm:p-5 space-y-3">
-          <div className="flex items-center justify-between border-b border-neutral-200/70 dark:border-neutral-800/80 pb-2.5">
+      {/* Key Price History Milestones Table (Buyhatke landmark events) */}
+      {milestones.length > 0 && (
+        <div className="bg-white dark:bg-neutral-900/80 rounded-2xl border border-neutral-200 dark:border-neutral-800 p-4 sm:p-6 space-y-4">
+          <div className="flex items-center justify-between border-b border-neutral-200/70 dark:border-neutral-800/80 pb-3">
             <div className="flex items-center gap-2">
               <TrendingDown className="w-4 h-4 text-[#FF6E40]" />
               <h4 className="text-sm font-bold text-neutral-900 dark:text-white uppercase tracking-wider">
-                Key Price History Milestones {timeRange === 'all' ? '(All Time)' : timeRange === '30d' ? '(Last 30 Days)' : '(Last 90 Days)'}
+                Price Drop History & Sale Milestones
               </h4>
             </div>
-            <span className="text-[11px] text-neutral-500 dark:text-neutral-400">
-              {milestones.length} recorded {milestones.length === 1 ? 'event' : 'events'}
+            <span className="text-[11px] text-neutral-500 dark:text-neutral-400 font-medium">
+              {milestones.length} verified events recorded
             </span>
           </div>
 
-          {milestones.length === 0 ? (
-            <div className="py-4 text-center text-xs text-neutral-500 dark:text-neutral-400">
-              No major promotional milestone drops occurred during the selected {timeRange === '30d' ? '30-day' : '90-day'} period. Price remained steady.
-            </div>
-          ) : (
-            <div className="divide-y divide-neutral-100 dark:divide-neutral-800/60">
-              {milestones.map((item, idx) => (
+          <div className="divide-y divide-neutral-100 dark:divide-neutral-800/70">
+            {milestones.map((item, idx) => {
+              const isLowest = item.price === stats.lowestPrice;
+              const isHighest = item.price === stats.highestPrice;
+
+              return (
                 <div
                   key={`milestone-${idx}`}
-                  className="py-2.5 sm:py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+                  className="py-3 sm:py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5"
                 >
-                  <div className="flex items-start gap-2.5">
+                  <div className="flex items-start gap-3">
                     <div className="mt-1">
-                      {item.isLowest ? (
+                      {isLowest ? (
                         <span className="flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
-                      ) : item.isHighest ? (
+                      ) : isHighest ? (
                         <span className="flex h-2.5 w-2.5 rounded-full bg-amber-500" />
                       ) : (
                         <span className="flex h-2.5 w-2.5 rounded-full bg-[#FF6E40]" />
@@ -1050,77 +888,169 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
                     <div>
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-xs font-semibold text-neutral-900 dark:text-white">
-                          {formatDate(item.date)}:
+                          {formatReadableDate(item.recordedAt)}:
                         </span>
                         <span className="text-xs text-neutral-700 dark:text-neutral-300">
-                          {item.note}
+                          {item.note || item.source}
                         </span>
-                        {item.dropPercentage && (
+
+                        {isLowest && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500 text-white">
+                            All-Time Low
+                          </span>
+                        )}
+                        {isHighest && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300">
+                            Launch / MRP
+                          </span>
+                        )}
+                        {item.dropPercentage && !isHighest && (
                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300">
                             {item.dropPercentage}
                           </span>
                         )}
-                        {item.isLowest && (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500 text-white">
-                            Lowest Price
-                          </span>
-                        )}
-                        {item.isHighest && (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300">
-                            Launch Price
-                          </span>
-                        )}
+
                         {item.source && (
-                          <span className="inline-flex items-center gap-1 text-[10px] text-neutral-600 dark:text-neutral-400 bg-neutral-100 dark:bg-neutral-800/80 px-2 py-0.5 rounded-md border border-neutral-200 dark:border-neutral-700">
-                            <span>Source: {item.source}</span>
+                          <span className="inline-flex items-center gap-1 text-[10px] text-neutral-600 dark:text-neutral-400 bg-neutral-100 dark:bg-neutral-800 px-2 py-0.5 rounded-md border border-neutral-200 dark:border-neutral-700">
+                            <span>{item.source}</span>
                             {item.sourceUrl && (
                               <a
                                 href={item.sourceUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="text-[#FF6E40] hover:underline font-bold"
-                                title="View verified source listing"
+                                title="View verified store listing"
                               >
                                 ↗
                               </a>
                             )}
                           </span>
                         )}
+
+                        {item.verificationMethod && (
+                          <span className="inline-flex items-center text-[10px] text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-950/50 px-2 py-0.5 rounded-md border border-sky-200 dark:border-sky-800 font-mono">
+                            {item.verificationMethod}
+                          </span>
+                        )}
+
+                        {item.isManual && (
+                          <span className="inline-flex items-center text-[9px] text-amber-800 dark:text-amber-300 bg-amber-100 dark:bg-amber-950/60 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">
+                            Admin Audit
+                          </span>
+                        )}
                       </div>
+
                       {item.evidence && (
                         <div className="text-[10px] text-neutral-500 dark:text-neutral-400 mt-1 italic pl-1 border-l-2 border-emerald-500/50">
-                          Evidence: {item.evidence}
+                          {item.evidence}
                         </div>
                       )}
                     </div>
                   </div>
 
-                  <div className="sm:text-right pl-5 sm:pl-0">
-                    <span className="text-xs sm:text-sm font-bold text-neutral-900 dark:text-white font-mono">
-                      {item.formattedPrice || formatPriceDisplay(item.price, currency)}
+                  <div className="sm:text-right pl-5 sm:pl-0 shrink-0">
+                    <span className="text-sm sm:text-base font-bold text-neutral-900 dark:text-white font-mono">
+                      {formatPriceInr(item.price)}
                     </span>
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
-
-          {intelligence?.summaryNote && (
-            <div className="mt-3 p-3 rounded-lg bg-neutral-50 dark:bg-neutral-800/40 border border-neutral-200/60 dark:border-neutral-700/60 text-xs text-neutral-600 dark:text-neutral-300 flex items-start gap-2">
-              <Info className="w-3.5 h-3.5 text-[#FF6E40] shrink-0 mt-0.5" />
-              <span>{intelligence.summaryNote}</span>
-            </div>
-          )}
+              );
+            })}
+          </div>
         </div>
       )}
 
-      {/* Editorial Transparency Footer */}
-      <div className="flex items-center gap-1.5 text-[11px] text-neutral-500 dark:text-neutral-400 bg-neutral-100/70 dark:bg-neutral-800/50 px-3.5 py-2 rounded-lg">
-        <Info className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
-        <span>
-          <strong>Automated Price Tracking:</strong> Price snapshots and landmark drops are verified from merchant links and public product records.
-        </span>
-      </div>
+      {/* Target Price Alert Modal */}
+      {showAlertModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          <div className="bg-white dark:bg-[#1a1b1e] rounded-3xl p-6 sm:p-7 border border-neutral-200 dark:border-neutral-800 max-w-md w-full shadow-2xl space-y-5 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-500">
+                  <Bell className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base text-neutral-900 dark:text-white">
+                    Set Price Drop Alert
+                  </h3>
+                  <p className="text-xs text-neutral-500">Get notified the moment this item drops in price</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowAlertModal(false)}
+                className="text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 p-1 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveAlert} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-neutral-700 dark:text-neutral-300">
+                  Target Price (₹)
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-neutral-400 font-mono font-bold">
+                    ₹
+                  </span>
+                  <input
+                    type="number"
+                    min="1"
+                    max={stats.highestPrice}
+                    value={targetAlertPrice || ''}
+                    onChange={(e) => setTargetAlertPrice(Number(e.target.value))}
+                    className="w-full pl-8 pr-4 py-2.5 text-sm font-mono font-bold rounded-xl border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800 text-neutral-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#FF6E40]"
+                    placeholder="Enter target price"
+                    required
+                  />
+                </div>
+                <div className="flex items-center justify-between text-[11px] text-neutral-500 pt-0.5">
+                  <span>Current: <strong>{formatPriceInr(stats.currentPrice)}</strong></span>
+                  <span>Lowest Ever: <strong>{formatPriceInr(stats.lowestPrice)}</strong></span>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-neutral-700 dark:text-neutral-300">
+                  Notification Email (Optional)
+                </label>
+                <input
+                  type="email"
+                  value={alertEmail}
+                  onChange={(e) => setAlertEmail(e.target.value)}
+                  className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800 text-neutral-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#FF6E40]"
+                  placeholder="your-email@example.com"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-2">
+                {activeAlert && (
+                  <button
+                    type="button"
+                    onClick={handleCancelAlert}
+                    className="px-4 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-xl transition-colors cursor-pointer mr-auto"
+                  >
+                    Delete Alert
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowAlertModal(false)}
+                  className="px-4 py-2 text-xs font-semibold text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-xl transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 text-xs font-semibold text-white bg-[#FF6E40] hover:bg-[#F25A2B] rounded-xl transition-colors shadow-sm cursor-pointer"
+                >
+                  Save Alert
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

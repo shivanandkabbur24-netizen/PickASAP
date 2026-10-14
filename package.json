@@ -7,13 +7,14 @@
     "dev": "tsx server.ts",
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "build:pages": "vite build",
-    "start": "node dist/server.cjs",
+    "start": "node server.ts",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "deploy:firebase": "npm run build && firebase deploy --only hosting",
     "deploy:cloudflare": "npm run build && npx wrangler pages deploy dist --project-name pickasap",
-    "deploy:hosting": "npm run build && firebase deploy --only hosting"
+    "deploy:hosting": "npm run build && firebase deploy --only hosting",
+    "push:github": "bash scripts/push_to_github.sh"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

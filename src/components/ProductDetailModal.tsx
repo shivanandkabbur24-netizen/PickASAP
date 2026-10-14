@@ -22,7 +22,8 @@ import {
 } from 'lucide-react';
 import { Product } from '../types';
 import { PriceHistoryChart } from './PriceHistoryChart';
-import { formatPriceDisplay } from '../lib/firebase';
+import { HistoricalPriceImportModal } from './HistoricalPriceImportModal';
+import { formatPriceDisplay, database as db } from '../lib/firebase';
 
 interface ProductDetailModalProps {
   product: Product | null;
@@ -48,6 +49,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   onSelectPartner,
 }) => {
   const [activeImageIndex, setActiveImageIndex] = useState(0);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
 
   // Reset active image index whenever the opened product changes
   useEffect(() => {
@@ -412,6 +414,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
               currentPrice={product.currentPrice}
               isAdmin={isAdmin}
               onAdminUpdateClick={onOpenPriceUpdate ? () => onOpenPriceUpdate(product) : undefined}
+              onImportCsvClick={isAdmin ? () => setIsImportModalOpen(true) : undefined}
             />
           </div>
 
@@ -461,6 +464,17 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Admin Historical Price CSV Import Modal */}
+      {isAdmin && product && isImportModalOpen && (
+        <HistoricalPriceImportModal
+          isOpen={isImportModalOpen}
+          onClose={() => setIsImportModalOpen(false)}
+          user={db.getCurrentUser()}
+          products={[product]}
+          preselectedProductId={product.id}
+        />
+      )}
     </div>
   );
 };

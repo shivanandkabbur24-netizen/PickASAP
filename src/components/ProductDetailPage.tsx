@@ -27,6 +27,7 @@ import {
 import { Product, PriceSnapshot, UserProfile } from '../types';
 import { PriceHistoryChart } from './PriceHistoryChart';
 import { PriceUpdateModal } from './PriceUpdateModal';
+import { HistoricalPriceImportModal } from './HistoricalPriceImportModal';
 import { database as db, formatPriceDisplay, parsePriceToNumber } from '../lib/firebase';
 
 interface ProductDetailPageProps {
@@ -63,6 +64,7 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
   const [snapshots, setSnapshots] = useState<PriceSnapshot[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [isPriceModalOpen, setIsPriceModalOpen] = useState(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
 
   // Scroll to top when product changes
   useEffect(() => {
@@ -154,7 +156,16 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
 
   // Compute stats for "Is it a good price to buy?" verdict
   const priceStats = useMemo(() => {
-    if (snapshots.length === 0) {
+    let effectiveHistorySnaps: Array<{ price: number }> = snapshots;
+    if (snapshots.length <= 1 && Array.isArray(product.priceHistory) && product.priceHistory.length > 1) {
+      effectiveHistorySnaps = product.priceHistory
+        .filter((m: any) => m && (typeof m.price === 'number' || m.price))
+        .map((m: any) => ({
+          price: typeof m.price === 'number' ? m.price : parsePriceToNumber(m.price),
+        }));
+    }
+
+    if (effectiveHistorySnaps.length === 0) {
       return {
         lowest: numericCurrentPrice,
         highest: numericMrp > numericCurrentPrice ? numericMrp : numericCurrentPrice,
@@ -162,7 +173,7 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
         dataPointsCount: 0,
       };
     }
-    const prices = snapshots.map((s) => s.price);
+    const prices = effectiveHistorySnaps.map((s) => s.price);
     const lowest = Math.min(...prices);
     const highest = Math.max(...prices);
     const sum = prices.reduce((acc, p) => acc + p, 0);
@@ -171,9 +182,9 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
       lowest,
       highest,
       average,
-      dataPointsCount: snapshots.length,
+      dataPointsCount: effectiveHistorySnaps.length,
     };
-  }, [snapshots, numericCurrentPrice, numericMrp]);
+  }, [snapshots, product.priceHistory, numericCurrentPrice, numericMrp]);
 
   // Evaluation of "Is it a good price to buy?"
   const priceVerdict = useMemo(() => {
@@ -683,6 +694,7 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
               currentPrice={numericCurrentPrice}
               isAdmin={isAdmin}
               onAdminUpdateClick={onOpenPriceUpdate ? () => onOpenPriceUpdate(product) : undefined}
+              onImportCsvClick={isAdmin ? () => setIsImportModalOpen(true) : undefined}
             />
           </div>
         </section>
@@ -759,6 +771,17 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
         product={product}
         currentUser={currentUser || db.getCurrentUser()}
       />
+
+      {/* Admin Historical Price CSV Import Modal */}
+      {isAdmin && isImportModalOpen && (
+        <HistoricalPriceImportModal
+          isOpen={isImportModalOpen}
+          onClose={() => setIsImportModalOpen(false)}
+          user={currentUser || db.getCurrentUser()}
+          products={allProducts.length > 0 ? allProducts : [product]}
+          preselectedProductId={product.id}
+        />
+      )}
     </div>
   );
 };

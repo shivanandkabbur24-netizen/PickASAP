@@ -2,6 +2,92 @@ export type SubmissionStatus = 'pending' | 'approved' | 'rejected';
 export type ApprovalMethod = 'automatic' | 'trusted-user' | 'admin';
 export type RiskLevel = 'low' | 'medium' | 'high';
 
+export type TrackingStatus =
+  | 'pending'
+  | 'in_review'
+  | 'approved'
+  | 'imported'
+  | 'needs_review'
+  | 'unavailable';
+
+export interface TrackingQueueItem {
+  id: string;
+  productId: string;
+  productName: string;
+  officialProductUrl: string;
+  marketplace: string;
+  exactModelVariant: string;
+  trackingStatus: TrackingStatus;
+  lastProcessedAt: string;
+  reviewNotes?: string;
+  errorDetails?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export type VerificationMethod =
+  | 'manual_receipt'
+  | 'official_store_archive'
+  | 'retailer_invoice'
+  | 'admin_audit'
+  | 'web_archive'
+  | 'retailer_feed'
+  | 'community_submission'
+  | string;
+
+export type HistoricalReviewStatus = 'approved' | 'pending' | 'rejected' | 'needs_review' | string;
+
+export interface HistoricalPriceObservation {
+  product_id: string;
+  observation_date: string;
+  price: number;
+  currency: string;
+  source_name: string;
+  source_url?: string;
+  source_observed_at?: string;
+  verification_method: string;
+  review_status: string;
+  is_manual?: boolean;
+}
+
+export interface CsvValidationRow {
+  rowNumber: number;
+  rawData: Record<string, string>;
+  parsedData?: HistoricalPriceObservation;
+  isValid: boolean;
+  errors: string[];
+  warnings: string[];
+  matchedProduct?: {
+    id: string;
+    title: string;
+    store: string;
+    exactModelVariant?: string;
+  };
+  isDuplicate?: boolean;
+}
+
+export interface CsvValidationResponse {
+  totalRows: number;
+  validCount: number;
+  invalidCount: number;
+  duplicateCount: number;
+  rows: CsvValidationRow[];
+  summary: {
+    canImportCount: number;
+    hasErrors: boolean;
+  };
+}
+
+export interface CsvImportResult {
+  totalSubmitted: number;
+  successful: number;
+  skipped: number;
+  rejected: number;
+  importedRecords: PriceSnapshot[];
+  errors: string[];
+  timestamp: string;
+}
+
 export interface PriceSnapshot {
   id: string;
   productId?: string;
@@ -17,6 +103,11 @@ export interface PriceSnapshot {
   dropPercentage?: string;
   isLowest?: boolean;
   isHighest?: boolean;
+  currency?: string;
+  sourceObservedAt?: string;
+  verificationMethod?: string;
+  reviewStatus?: string;
+  isManual?: boolean;
 }
 
 export interface PriceMilestone {

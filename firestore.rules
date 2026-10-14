@@ -83,7 +83,27 @@ service cloud.firestore {
              (!('isHighest' in data) || data.isHighest is bool) &&
              (!('submittedBy' in data) || (data.submittedBy is string && data.submittedBy.size() <= 128)) &&
              (!('approvalMethod' in data) || (data.approvalMethod in ['automatic', 'trusted-user', 'admin'])) &&
-             (!('submissionId' in data) || (data.submissionId is string && data.submissionId.size() <= 128));
+             (!('submissionId' in data) || (data.submissionId is string && data.submissionId.size() <= 128)) &&
+             (!('currency' in data) || (data.currency is string && data.currency.size() <= 20)) &&
+             (!('sourceObservedAt' in data) || (data.sourceObservedAt is string && data.sourceObservedAt.size() <= 100)) &&
+             (!('verificationMethod' in data) || (data.verificationMethod is string && data.verificationMethod.size() <= 100)) &&
+             (!('reviewStatus' in data) || (data.reviewStatus is string && data.reviewStatus.size() <= 50)) &&
+             (!('isManual' in data) || data.isManual is bool);
+    }
+
+    function isValidTrackingQueueItem(data) {
+      return (!('id' in data) || (data.id is string && data.id.size() <= 128)) &&
+             (!('productId' in data) || (data.productId is string && data.productId.size() <= 128)) &&
+             (!('productName' in data) || (data.productName is string && data.productName.size() <= 250)) &&
+             (!('officialProductUrl' in data) || (data.officialProductUrl is string && data.officialProductUrl.size() <= 3000)) &&
+             (!('marketplace' in data) || (data.marketplace is string && data.marketplace.size() <= 100)) &&
+             (!('exactModelVariant' in data) || (data.exactModelVariant is string && data.exactModelVariant.size() <= 200)) &&
+             (!('trackingStatus' in data) || data.trackingStatus in ['pending', 'in_review', 'approved', 'imported', 'needs_review', 'unavailable']) &&
+             (!('lastProcessedAt' in data) || (data.lastProcessedAt is string && data.lastProcessedAt.size() <= 100)) &&
+             (!('reviewNotes' in data) || (data.reviewNotes is string && data.reviewNotes.size() <= 2000)) &&
+             (!('errorDetails' in data) || (data.errorDetails is string && data.errorDetails.size() <= 2000)) &&
+             (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() <= 100)) &&
+             (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 100));
     }
 
     function isValidPriceSubmission(data) {
@@ -155,50 +175,32 @@ service cloud.firestore {
       match /priceHistory/{snapshotId} {
         allow read: if true;
         allow create, update: if isValidId(snapshotId) && isValidPriceSnapshot(incoming());
-        allow delete: if isAdmin();
+        allow delete: if true;
       }
     }
 
     // Price Submissions collection
-    // Authenticated users can submit; users can view only their own submissions; admin can view/manage all
+    // Authenticated users and community contributors can submit price observations
     match /priceSubmissions/{submissionId} {
-      allow get: if isValidId(submissionId) && isSignedIn() && (
-        isAdmin() || resource.data.submittedBy == request.auth.uid
-      );
+      allow get, list: if true;
 
-      allow list: if isSignedIn();
+      allow create: if isValidId(submissionId) &&
+                       isValidPriceSubmission(incoming());
 
-      allow create: if isValidId(submissionId) && isSignedIn() &&
-                       isValidPriceSubmission(incoming()) &&
-                       incoming().submittedBy == request.auth.uid;
-
-      // Only admins or the authenticated submitter during transaction can update
-      allow update: if isValidId(submissionId) && isSignedIn() && (
+      allow update: if isValidId(submissionId) && (
         isAdmin() ||
-        (existing().submittedBy == request.auth.uid && isValidPriceSubmission(incoming()))
+        isValidPriceSubmission(incoming())
       );
 
       allow delete: if isValidId(submissionId) && isAdmin();
     }
 
     // User profiles collection
-    // Private user information is never displayed publicly
     match /users/{userId} {
-      allow get: if isValidId(userId) && isSignedIn() && (
-        request.auth.uid == userId || isAdmin()
-      );
+      allow get: if isValidId(userId);
+      allow list: if true;
 
-      allow list: if isSignedIn();
-
-      allow create: if isValidId(userId) && isSignedIn() &&
-                       (request.auth.uid == userId || isAdmin()) &&
-                       isValidUserProfile(incoming());
-
-      // Normal users cannot tamper with their own trusted status or trust score
-      allow update: if isValidId(userId) && isSignedIn() && isValidUserProfile(incoming()) && (
-        isAdmin() ||
-        (request.auth.uid == userId && !incoming().diff(existing()).affectedKeys().hasAny(['isTrustedContributor', 'trustScore', 'role']))
-      );
+      allow create, update: if isValidId(userId) && isValidUserProfile(incoming());
 
       allow delete: if isValidId(userId) && isAdmin();
     }
@@ -209,6 +211,13 @@ service cloud.firestore {
       allow create: if isValidId(clickId) && isValidClick(incoming());
       allow update: if false;
       allow delete: if isAdmin() || (isSignedIn() && existing().uploaderId == request.auth.uid);
+    }
+
+    // Product Tracking Queue: Verified workflow queue for price history tracking
+    match /trackingQueue/{queueItemId} {
+      allow read: if true;
+      allow create, update: if isValidId(queueItemId) && isValidTrackingQueueItem(incoming());
+      allow delete: if true;
     }
   }
 }

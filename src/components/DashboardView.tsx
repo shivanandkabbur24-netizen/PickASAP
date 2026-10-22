@@ -32,11 +32,8 @@ import {
 import { Product, ClickRecord, UserProfile, PriceSubmission } from '../types';
 import { database as db, getStoredTrackingQueue } from '../lib/firebase';
 import { AdminPriceUpdateModal } from './AdminPriceUpdateModal';
-import { PriceSubmissionsManager } from './PriceSubmissionsManager';
 import { TrustedUsersManager } from './TrustedUsersManager';
 import { PlatformFeeModal } from './PlatformFeeModal';
-import { ProductTrackingQueue } from './ProductTrackingQueue';
-import { HistoricalPriceImportModal } from './HistoricalPriceImportModal';
 import {
   getRevenueTier,
   getCurrentMonthKey,
@@ -74,32 +71,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     user.email?.toLowerCase().trim() === 'shivanandkabbur24@gmail.com' ||
     user.email?.toLowerCase().includes('admin');
 
-  const [activeTab, setActiveTab] = useState<'catalog' | 'clicks' | 'submissions' | 'contributors' | 'tracking-queue'>('catalog');
+  const [activeTab, setActiveTab] = useState<'catalog' | 'clicks' | 'contributors'>('catalog');
   const [selectedMonthKey, setSelectedMonthKey] = useState<string>(() => getCurrentMonthKey());
   const [currentUserState, setCurrentUserState] = useState<UserProfile>(user);
   const [isPlatformFeeModalOpen, setIsPlatformFeeModalOpen] = useState(false);
-  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
-  const [selectedProductForImport, setSelectedProductForImport] = useState<string | undefined>(undefined);
-  const [queueUnfinishedCount, setQueueUnfinishedCount] = useState<number>(() => {
-    const q = getStoredTrackingQueue();
-    return q.filter((it) => ['pending', 'in_review', 'needs_review'].includes(it.trackingStatus)).length;
-  });
 
   useEffect(() => {
     setCurrentUserState(user);
   }, [user]);
-
-  // Subscribe to tracking queue updates
-  useEffect(() => {
-    const unsub = db.subscribeToTrackingQueue((items) => {
-      setQueueUnfinishedCount(
-        items.filter((it) => ['pending', 'in_review', 'needs_review'].includes(it.trackingStatus)).length
-      );
-    });
-    return () => {
-      if (typeof unsub === 'function') unsub();
-    };
-  }, []);
 
   const [clicks, setClicks] = useState<ClickRecord[]>(() => db.getStoredClicks());
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -108,30 +87,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [isDeleting, setIsDeleting] = useState(false);
   const [priceModalProduct, setPriceModalProduct] = useState<Product | null>(null);
   const [isPriceModalOpen, setIsPriceModalOpen] = useState(false);
-  const [pendingCount, setPendingCount] = useState<number>(() =>
-    db.getSubmissions().filter((s) => s.status === 'pending').length
-  );
 
   // If a non-owner user attempts to switch to restricted tabs, force back to catalog
   useEffect(() => {
-    if (
-      !isOwnerAdmin &&
-      (activeTab === 'submissions' ||
-        activeTab === 'contributors' ||
-        activeTab === 'tracking-queue')
-    ) {
+    if (!isOwnerAdmin && activeTab === 'contributors') {
       setActiveTab('catalog');
     }
   }, [isOwnerAdmin, activeTab]);
 
-  // Load and subscribe to clicks and submissions
+  // Load and subscribe to clicks
   useEffect(() => {
     const unsubscribeClicks = db.subscribeToClicks((liveClicks) => {
       setClicks(liveClicks);
-    });
-
-    const unsubscribeSubmissions = db.subscribeToSubmissions((subs) => {
-      setPendingCount(subs.filter((s) => s.status === 'pending').length);
     });
 
     db.getClicks().then(setClicks);
@@ -148,7 +115,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     window.addEventListener('pickasap:click_recorded', handleLiveClick as EventListener);
     return () => {
       unsubscribeClicks();
-      if (typeof unsubscribeSubmissions === 'function') unsubscribeSubmissions();
       window.removeEventListener('pickasap:click_recorded', handleLiveClick as EventListener);
     };
   }, []);
@@ -398,27 +364,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </span>
         </button>
 
-        {/* Price Review Queue: Only visible to shivanandkabbur24@gmail.com */}
-        {isOwnerAdmin && (
-          <button
-            id="dashboard-tab-submissions"
-            onClick={() => setActiveTab('submissions')}
-            className={`pb-3 px-4 text-xs sm:text-sm font-semibold flex items-center gap-2 border-b-2 transition-colors whitespace-nowrap cursor-pointer ${
-              activeTab === 'submissions'
-                ? 'border-[#FF6E40] text-[#FF6E40]'
-                : 'border-transparent text-neutral-500 hover:text-neutral-900 dark:hover:text-white'
-            }`}
-          >
-            <FileCheck className="w-4 h-4" />
-            <span>Price Review Queue</span>
-            {pendingCount > 0 && (
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500 text-white animate-pulse">
-                {pendingCount}
-              </span>
-            )}
-          </button>
-        )}
-
         {/* Trusted Contributors: Only visible to shivanandkabbur24@gmail.com */}
         {isOwnerAdmin && (
           <button
@@ -437,43 +382,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 Trusted
               </span>
             )}
-          </button>
-        )}
-
-        {/* Tab 4: Product Tracking Queue: Visible to Owner Admin */}
-        {isOwnerAdmin && (
-          <button
-            id="dashboard-tab-tracking-queue"
-            onClick={() => setActiveTab('tracking-queue')}
-            className={`pb-3 px-4 text-xs sm:text-sm font-semibold flex items-center gap-2 border-b-2 transition-colors whitespace-nowrap cursor-pointer ${
-              activeTab === 'tracking-queue'
-                ? 'border-[#FF6E40] text-[#FF6E40]'
-                : 'border-transparent text-neutral-500 hover:text-neutral-900 dark:hover:text-white'
-            }`}
-          >
-            <Layers className="w-4 h-4" />
-            <span>Product Tracking Queue</span>
-            {queueUnfinishedCount > 0 && (
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#FF6E40] text-white">
-                {queueUnfinishedCount}
-              </span>
-            )}
-          </button>
-        )}
-
-        {/* Quick CSV Import Action Button */}
-        {isOwnerAdmin && (
-          <button
-            id="dashboard-tab-price-import-btn"
-            onClick={() => {
-              setSelectedProductForImport(undefined);
-              setIsImportModalOpen(true);
-            }}
-            className="pb-3 px-3 text-xs sm:text-sm font-semibold flex items-center gap-1.5 border-b-2 border-transparent text-neutral-500 hover:text-[#FF6E40] dark:hover:text-[#FF6E40] transition-colors whitespace-nowrap cursor-pointer ml-auto"
-            title="Import historical price observation CSV"
-          >
-            <Upload className="w-3.5 h-3.5 text-[#FF6E40]" />
-            <span>CSV Price Import</span>
           </button>
         )}
       </div>
@@ -1139,37 +1047,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       )}
 
       {/* Tab 2: Price Submissions & Approvals (Only visible to shivanandkabbur24@gmail.com) */}
-      {isOwnerAdmin && activeTab === 'submissions' && (
-        <PriceSubmissionsManager
-          currentUser={user}
-          onProductClick={(prodId) => {
-            const found = products.find((p) => p.id === prodId);
-            if (found && onSelectProduct) {
-              onSelectProduct(found);
-            }
-          }}
-        />
-      )}
-
       {/* Tab 3: Trusted Contributors & User Trust Management (Only visible to shivanandkabbur24@gmail.com) */}
       {isOwnerAdmin && activeTab === 'contributors' && (
         <TrustedUsersManager currentUser={user} />
-      )}
-
-      {/* Tab 4: Product Tracking Queue (Admin Only) */}
-      {isOwnerAdmin && activeTab === 'tracking-queue' && (
-        <ProductTrackingQueue
-          user={user}
-          products={products}
-          onOpenImportForProduct={(prodId) => {
-            setSelectedProductForImport(prodId);
-            setIsImportModalOpen(true);
-          }}
-          onOpenDirectCsvImport={() => {
-            setSelectedProductForImport(undefined);
-            setIsImportModalOpen(true);
-          }}
-        />
       )}
 
       {/* In-App Delete Confirmation Modal (Bypasses iframe alert/confirm restrictions) */}
@@ -1301,23 +1181,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           onOpenUploadModal();
         }}
       />
-
-      {/* Historical Price CSV Import Modal */}
-      {isImportModalOpen && (
-        <HistoricalPriceImportModal
-          isOpen={isImportModalOpen}
-          onClose={() => {
-            setIsImportModalOpen(false);
-            setSelectedProductForImport(undefined);
-          }}
-          user={currentUserState}
-          products={products}
-          preselectedProductId={selectedProductForImport}
-          onImportComplete={(report) => {
-            console.log('[Dashboard] Price import completed:', report);
-          }}
-        />
-      )}
     </div>
   );
 };

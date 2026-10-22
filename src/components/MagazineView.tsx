@@ -31,32 +31,18 @@ import {
   ChevronRight,
   RefreshCw,
   Sparkle,
+  Trophy,
+  RotateCcw,
 } from 'lucide-react';
 import { Product, CategoryType, StoreType, SortOption } from '../types';
 import { database as db, formatPriceDisplay, parsePriceToNumber } from '../lib/firebase';
 import { ProductDetailModal } from './ProductDetailModal';
+import { DealOrbGame } from './DealOrbGame';
+import { DealTierId, DEAL_TIERS, rankProductsByTier } from '../lib/gameProfile';
 import pickasapBannerImage from '../assets/images/pickasap_festive_banner_1790333064627.jpg';
 
-// Calculate effective discount percentage from explicit fields or MRP comparison
-export const getEffectiveDiscount = (product: Product): number => {
-  if (typeof product.discountPercent === 'number' && product.discountPercent > 0) {
-    return product.discountPercent;
-  }
-  if (typeof product.discount === 'number' && product.discount > 0) {
-    return product.discount;
-  }
-  if (typeof product.discountPercentage === 'number' && product.discountPercentage > 0) {
-    return product.discountPercentage;
-  }
-  const original = parsePriceToNumber(product.originalPrice || product.mrp);
-  const current = typeof product.currentPrice === 'number' && product.currentPrice > 0
-    ? product.currentPrice
-    : parsePriceToNumber(product.price);
-  if (original > current && original > 0 && current > 0) {
-    return Math.round(((original - current) / original) * 100);
-  }
-  return 0;
-};
+import { getEffectiveDiscount } from '../lib/discountUtils';
+export { getEffectiveDiscount };
 
 // Composite ranking score combining best deals (discounts) and popularity (clicks)
 export const getBestProductScore = (p: Product): number => {
@@ -475,6 +461,11 @@ export const MagazineView: React.FC<MagazineViewProps> = ({
   const [shareProduct, setShareProduct] = useState<Product | null>(null);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
 
+  // Catch the Deal Orb Gaming Mode State
+  const [isGameOpen, setIsGameOpen] = useState<boolean>(false);
+  const [activeGameTier, setActiveGameTier] = useState<DealTierId | null>(null);
+  const [catchTimeMs, setCatchTimeMs] = useState<number | undefined>(undefined);
+
   // Listen for global filter events dispatched from SEO footer or deep links
   useEffect(() => {
     const handleGlobalFilter = (e: CustomEvent<{ store?: StoreType; category?: CategoryType; sort?: SortOption; search?: string }>) => {
@@ -497,8 +488,7 @@ export const MagazineView: React.FC<MagazineViewProps> = ({
 
   // Filter and sort products
   const filteredProducts = useMemo(() => {
-    return products
-      .filter((p) => {
+    const baseFiltered = products.filter((p) => {
         // Search filter
         if (searchQuery.trim()) {
           const query = searchQuery.toLowerCase();
@@ -527,8 +517,14 @@ export const MagazineView: React.FC<MagazineViewProps> = ({
         }
 
         return true;
-      })
-      .sort((a, b) => {
+      });
+
+    // When an active game tier is unlocked, prioritize deals by tier while strictly preserving search relevance
+    if (activeGameTier && activeGameTier !== 'standard') {
+      return rankProductsByTier(baseFiltered, activeGameTier, searchQuery);
+    }
+
+    return baseFiltered.sort((a, b) => {
         // Default: "best products on top" - prioritized by composite deal discount and click popularity
         if (sortBy === 'best') {
           const scoreA = getBestProductScore(a);
@@ -595,7 +591,7 @@ export const MagazineView: React.FC<MagazineViewProps> = ({
         }
         return 0;
       });
-  }, [products, searchQuery, selectedCategory, selectedStore, onlyFavorites, sortBy, favorites]);
+  }, [products, searchQuery, selectedCategory, selectedStore, onlyFavorites, sortBy, favorites, activeGameTier]);
 
   // SEO & Dynamic Metadata synchronization: updates browser title, meta tags, and URL search params
   useEffect(() => {
@@ -1009,28 +1005,65 @@ export const MagazineView: React.FC<MagazineViewProps> = ({
         {/* Search, Filter Bar & Quick Sort Controls */}
         <div className="space-y-4 mb-8 p-4 rounded-2xl bg-neutral-50/80 dark:bg-[#111318]/70 border border-neutral-200/80 dark:border-neutral-800/80">
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-            {/* Search Input */}
-            <div className="relative flex-1 max-w-lg">
-              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-neutral-400">
-                <Search className="w-4 h-4" />
+            {/* Search Input Form with Catch the Deal Orb game trigger */}
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (searchQuery.trim()) {
+                  setIsGameOpen(true);
+                }
+              }}
+              className="relative flex-1 max-w-xl flex items-center gap-2"
+            >
+              <div className="relative flex-1">
+                <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-neutral-400">
+                  <Search className="w-4 h-4" />
+                </div>
+                <input
+                  id="magazine-search-input"
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search deals (e.g. smartphones, headphones, shoes, laptops)..."
+                  className="w-full pl-10 pr-12 py-2.5 rounded-xl border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-sm focus:outline-none focus:ring-2 focus:ring-[#FF6E40]/20 focus:border-[#FF6E40] transition-all"
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchQuery('');
+                      setActiveGameTier(null);
+                    }}
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-xs font-semibold text-neutral-400 hover:text-neutral-700 dark:hover:text-white cursor-pointer"
+                  >
+                    Clear
+                  </button>
+                )}
               </div>
-              <input
-                id="magazine-search-input"
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search deals, products, brands, or notes..."
-                className="w-full pl-10 pr-10 py-2.5 rounded-xl border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-sm focus:outline-none focus:ring-2 focus:ring-[#FF6E40]/20 focus:border-[#FF6E40] transition-all"
-              />
-              {searchQuery && (
-                <button
-                  onClick={() => setSearchQuery('')}
-                  className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-xs font-semibold text-neutral-400 hover:text-neutral-700 dark:hover:text-white cursor-pointer"
-                >
-                  Clear
-                </button>
-              )}
-            </div>
+
+              {/* Prominent Search & Play Button */}
+              <button
+                type="submit"
+                id="search-and-play-btn"
+                className="px-3.5 py-2.5 rounded-xl bg-gradient-to-r from-[#FF6E40] to-amber-500 hover:from-[#e05b30] hover:to-amber-400 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-orange-500/20 transition-all cursor-pointer whitespace-nowrap active:scale-95"
+                title="Search and play Catch the Deal Orb to unlock bonus deal tiers"
+              >
+                <Zap className="w-3.5 h-3.5 fill-current" />
+                <span>Search &amp; Play</span>
+              </button>
+
+              {/* Quick Play Orb Button */}
+              <button
+                type="button"
+                id="quick-play-orb-btn"
+                onClick={() => setIsGameOpen(true)}
+                className="hidden sm:flex px-3 py-2.5 rounded-xl border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 dark:text-amber-400 font-bold text-xs items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap"
+                title="Play Catch the Deal Orb game directly"
+              >
+                <Flame className="w-3.5 h-3.5 text-[#FF6E40]" />
+                <span>Catch Orb</span>
+              </button>
+            </form>
 
             {/* Quick Sorter & Store Controls */}
             <div className="flex flex-wrap items-center gap-2.5 text-xs">
@@ -1172,6 +1205,80 @@ export const MagazineView: React.FC<MagazineViewProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Active Catch the Deal Orb Unlocked Tier Banner */}
+        {activeGameTier && activeGameTier !== 'standard' && (
+          <div
+            id="active-deal-tier-banner"
+            className={`mb-8 p-5 rounded-3xl border shadow-lg flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-fade-in ${
+              DEAL_TIERS[activeGameTier].colorClass
+            } bg-gradient-to-r ${DEAL_TIERS[activeGameTier].bgGradient}`}
+          >
+            <div className="flex items-center gap-3.5">
+              <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-400/50 flex items-center justify-center shrink-0 shadow-md">
+                <Trophy className="w-6 h-6 text-amber-400 animate-pulse" />
+              </div>
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-extrabold text-base text-white tracking-tight">
+                    {DEAL_TIERS[activeGameTier].badge}
+                  </span>
+                  {catchTimeMs && (
+                    <span className="text-xs font-mono font-bold px-2.5 py-0.5 rounded-full bg-black/50 text-amber-300 border border-amber-500/40">
+                      ⚡ {(catchTimeMs / 1000).toFixed(2)}s catch
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-neutral-200 leading-relaxed">
+                  {DEAL_TIERS[activeGameTier].description} Showing verified deals for{' '}
+                  <strong className="text-white">"{searchQuery || 'Catalog Deals'}"</strong>.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2.5 self-start sm:self-auto shrink-0">
+              <button
+                id="replay-orb-game-btn"
+                onClick={() => setIsGameOpen(true)}
+                className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-[#FF6E40] hover:from-amber-400 hover:to-[#e05b30] text-black font-extrabold text-xs flex items-center gap-1.5 transition-all cursor-pointer active:scale-95 shadow-md"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Play Again</span>
+              </button>
+
+              <button
+                id="clear-deal-tier-btn"
+                onClick={() => setActiveGameTier(null)}
+                className="px-3.5 py-2 rounded-xl bg-black/40 hover:bg-black/60 text-neutral-300 hover:text-white text-xs font-semibold border border-neutral-700/60 transition-colors cursor-pointer"
+              >
+                Reset
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Search Active Invitation to Play if not yet played */}
+        {searchQuery.trim() && !activeGameTier && (
+          <div className="mb-6 p-4 rounded-2xl bg-gradient-to-r from-orange-500/10 via-amber-500/10 to-transparent border border-[#FF6E40]/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-2.5">
+              <span className="w-2.5 h-2.5 rounded-full bg-[#FF6E40] animate-ping" />
+              <span className="text-neutral-700 dark:text-neutral-200">
+                Searching for <strong className="text-neutral-900 dark:text-white">"{searchQuery}"</strong>?
+                Catch the Deal Orb within 10s to unlock Priority Deal rankings!
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={() => setIsGameOpen(true)}
+                className="px-3.5 py-1.5 rounded-xl bg-[#FF6E40] hover:bg-[#e05b30] text-white font-bold text-xs flex items-center gap-1 shadow-sm transition-all cursor-pointer active:scale-95"
+              >
+                <Zap className="w-3.5 h-3.5 fill-current" />
+                <span>Play Game (10s)</span>
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Product Grid / Editorial Showcase */}
         {isLoading && products.length === 0 ? (
@@ -1610,6 +1717,24 @@ export const MagazineView: React.FC<MagazineViewProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Catch the Deal Orb Interactive Mini-Game Modal */}
+      {isGameOpen && (
+        <DealOrbGame
+          isOpen={isGameOpen}
+          onClose={() => setIsGameOpen(false)}
+          searchQuery={searchQuery}
+          onTierUnlocked={(tier, timeMs) => {
+            setActiveGameTier(tier);
+            setCatchTimeMs(timeMs);
+            setIsGameOpen(false);
+          }}
+          onSkipGame={() => {
+            setActiveGameTier('standard');
+            setIsGameOpen(false);
+          }}
+        />
       )}
     </div>
   );

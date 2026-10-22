@@ -460,6 +460,22 @@ app.post('/api/price-history/fetch', async (req, res) => {
         const avg = Math.round(prices.reduce((sum: number, val: number) => sum + val, 0) / prices.length);
         const cur = validPoints[validPoints.length - 1].price || currentPriceNum;
 
+        // Section 3.C Exact Price Calculations:
+        // referenceMidpoint = (highestPriceFound + lowestPriceFound) / 2
+        const referenceMidpoint = Math.round((high + low) / 2);
+        // percentageDifference = ((currentPrice - referenceMidpoint) / referenceMidpoint) * 100
+        const percentageDifference =
+          referenceMidpoint > 0
+            ? Math.round(((cur - referenceMidpoint) / referenceMidpoint) * 1000) / 10
+            : 0;
+
+        let buyingIndicator: 'Good time to buy' | 'Consider waiting' | 'At the reference price' = 'At the reference price';
+        if (percentageDifference < 0) {
+          buyingIndicator = 'Good time to buy';
+        } else if (percentageDifference > 0) {
+          buyingIndicator = 'Consider waiting';
+        }
+
         const milestones = validPoints.map((p: any) => ({
           date: p.date,
           price: p.price,
@@ -486,6 +502,10 @@ app.post('/api/price-history/fetch', async (req, res) => {
           formattedHighestPrice: formatINR(high),
           averagePrice: avg,
           formattedAveragePrice: formatINR(avg),
+          referenceMidpoint,
+          formattedReferenceMidpoint: formatINR(referenceMidpoint),
+          percentageDifference,
+          buyingIndicator,
           currency: '₹',
           isHistoricalDataAvailable: true,
           uncertaintyNote: null,
@@ -551,6 +571,20 @@ app.post('/api/price-history/fetch', async (req, res) => {
     const low = Math.min(...prices);
     const high = Math.max(...prices);
     const avg = Math.round(prices.reduce((s: number, v: number) => s + v, 0) / prices.length);
+    const curPrice = currentPriceNum || fallbackMatch.currentPrice || validPoints[validPoints.length - 1].price;
+    const referenceMidpoint = Math.round((high + low) / 2);
+    const percentageDifference =
+      referenceMidpoint > 0
+        ? Math.round(((curPrice - referenceMidpoint) / referenceMidpoint) * 1000) / 10
+        : 0;
+
+    let buyingIndicator: 'Good time to buy' | 'Consider waiting' | 'At the reference price' = 'At the reference price';
+    if (percentageDifference < 0) {
+      buyingIndicator = 'Good time to buy';
+    } else if (percentageDifference > 0) {
+      buyingIndicator = 'Consider waiting';
+    }
+
     const milestones = validPoints.map((p: any) => ({
       date: p.date,
       price: p.price,
@@ -565,14 +599,18 @@ app.post('/api/price-history/fetch', async (req, res) => {
         productName: fallbackMatch.title,
         productTitle: fallbackMatch.title,
         resolvedUrl,
-        currentPrice: currentPriceNum || fallbackMatch.currentPrice || validPoints[validPoints.length - 1].price,
-        formattedCurrentPrice: formatINR(currentPriceNum || fallbackMatch.currentPrice || validPoints[validPoints.length - 1].price),
+        currentPrice: curPrice,
+        formattedCurrentPrice: formatINR(curPrice),
         lowestPrice: low,
         formattedLowestPrice: formatINR(low),
         highestPrice: high,
         formattedHighestPrice: formatINR(high),
         averagePrice: avg,
         formattedAveragePrice: formatINR(avg),
+        referenceMidpoint,
+        formattedReferenceMidpoint: formatINR(referenceMidpoint),
+        percentageDifference,
+        buyingIndicator,
         currency: '₹',
         isHistoricalDataAvailable: true,
         uncertaintyNote: null,
